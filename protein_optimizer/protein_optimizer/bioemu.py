@@ -10,8 +10,7 @@ Design principles:
     (AlphaFold, RoseTTAFold, etc.) by subclassing BaseStructuralBackend.
   - MockBioEmuBackend provides deterministic synthetic outputs for CI / GPU-free
     development — toggle with BioEmuConfig(mock=True).
-  - Batch inference is the default and only public interface.
-"""
+  - Batch inference is the default and only public interface. hello
 
 from __future__ import annotations
 
