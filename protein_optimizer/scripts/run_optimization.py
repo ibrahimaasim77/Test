@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from protein_optimizer import (
+    ConformationalLandscapeScorer,
     GAConfig,
     MutationConfig,
     OptimizationConfig,
@@ -142,9 +143,49 @@ def score_breakdown_demo() -> None:
 
 
 # ---------------------------------------------------------------------------
+# 5. Target conformational landscape scorer
+# ---------------------------------------------------------------------------
+
+def landscape_scorer_demo() -> None:
+    print("\n" + "=" * 50)
+    print("Target conformational landscape scorer")
+    print("=" * 50)
+
+    from protein_optimizer.bioemu import BioEmuConfig, MockBioEmuBackend
+
+    cfg = OptimizationConfig()
+    cfg.original_sequence = "MKTLLILAVLCLGFAQASGNIERPIDGFHGDLQ"
+    cfg.bioemu.mock = True
+    cfg.mutation.strategy = "random"
+    cfg.ga.population_size = 10
+    cfg.ga.max_generations = 5
+    cfg.logging.output_dir = "results/landscape_scorer"
+
+    # In a planted-mutation proof of concept, this target would be generated
+    # from the hidden mutant sequence, then the GA tries to recover it.
+    hidden_target_sequence = "MKTLLILAVLCLGFAQASGNIERPIDGFHFDLQ"
+    backend = MockBioEmuBackend(BioEmuConfig(mock=True, num_samples=8))
+    target_output = backend.infer_batch([hidden_target_sequence])[0]
+
+    scoring_fn = ScoringFunction(cfg.scoring)
+    scoring_fn.add_component(
+        ConformationalLandscapeScorer(target_output, max_states=4),
+        weight=0.6,
+        renormalize=True,
+    )
+
+    print(f"Active scoring components: {scoring_fn.component_names()}")
+
+    pipeline = ProteinOptimizationPipeline(cfg, scoring_fn=scoring_fn)
+    result = pipeline.run()
+    print(f"Best score: {result.best_score:.4f}")
+
+
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     quick_start()
     from_yaml_config()
     custom_scorer_demo()
     score_breakdown_demo()
+    landscape_scorer_demo()

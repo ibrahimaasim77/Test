@@ -21,6 +21,7 @@ from .config import (
     ScoringConfig,
 )
 from .pipeline import OptimizationResult, ProteinOptimizationPipeline
+from .scoring import ConformationalLandscapeScorer, ScoringFunction
 
 __all__ = [
     "ProteinOptimizationPipeline",
@@ -32,4 +33,6 @@ __all__ = [
     "BioEmuConfig",
     "ESM2Config",
     "LoggingConfig",
+    "ScoringFunction",
+    "ConformationalLandscapeScorer",
 ]

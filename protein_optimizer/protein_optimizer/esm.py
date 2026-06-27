@@ -18,8 +18,6 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-import torch
-
 from .config import ESM2Config
 
 logger = logging.getLogger(__name__)
@@ -87,11 +85,12 @@ class ESM2MutationProposer:
             return
 
         try:
+            import torch  # noqa: F401
             from transformers import AutoTokenizer, EsmForMaskedLM
         except ImportError as exc:
             raise ImportError(
-                "transformers is required for ESM-2 integration. "
-                "Install with: pip install transformers"
+                "torch and transformers are required for ESM-2 integration. "
+                "Install with: pip install torch transformers"
             ) from exc
 
         logger.info("Loading ESM-2 model: %s", self.config.model_name)
@@ -163,6 +162,8 @@ class ESM2MutationProposer:
         Build one masked sequence per position, batch-tokenise, run forward pass,
         and extract log-probabilities for the 20 canonical AAs.
         """
+        import torch
+
         assert self._tokenizer is not None
         assert self._model is not None
         assert self._aa_token_ids is not None

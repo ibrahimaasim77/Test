@@ -8,6 +8,7 @@ from protein_optimizer.config import ScoringConfig
 from protein_optimizer.scoring import (
     CompactnessScorer,
     ComponentScorer,
+    ConformationalLandscapeScorer,
     ConsistencyScorer,
     EnergyScorer,
     ScoringFunction,
@@ -16,6 +17,16 @@ from protein_optimizer.scoring import (
 
 
 SEQ = "MKTLLILAVLCLGFAQAS"
+
+
+def make_landscape_output(sequence=SEQ, states=(5.0, 12.0, 5.0, 12.0)):
+    """Build a small synthetic ensemble with distance-matrix states."""
+    output = BioEmuOutput(sequence=sequence)
+    for distance in states:
+        matrix = np.full((6, 6), distance, dtype=float)
+        np.fill_diagonal(matrix, 0.0)
+        output.samples.append(ConformationSample(distance_matrix=matrix))
+    return output
 
 
 @pytest.fixture
@@ -114,6 +125,17 @@ class TestScoringFunction:
         # Weights must remain normalised
         assert abs(sum(fn._weights) - 1.0) < 1e-6
 
+    def test_add_preconfigured_component_scorer(self):
+        target = make_landscape_output()
+        fn = ScoringFunction(ScoringConfig())
+        fn.add_component(
+            ConformationalLandscapeScorer(target, max_states=2),
+            weight=0.5,
+            renormalize=True,
+        )
+        assert "landscape" in fn.component_names()
+        assert abs(sum(fn._weights) - 1.0) < 1e-6
+
     def test_invalid_weights_raise_on_config(self):
         with pytest.raises(ValueError, match="must sum to 1.0"):
             ScoringConfig(
@@ -130,3 +152,43 @@ class TestScoringFunction:
         scores = scoring_fn.score_batch(outputs)
         # Mock backend hashes the sequence — scores should differ
         assert scores[0] != scores[1]
+
+
+class TestConformationalLandscapeScorer:
+    def test_identical_ensemble_scores_near_one(self):
+        target = make_landscape_output()
+        scorer = ConformationalLandscapeScorer(target, max_states=2)
+
+        score = scorer.score(target)
+
+        assert score > 0.99
+
+    def test_off_target_ensemble_scores_low(self):
+        target = make_landscape_output(states=(5.0, 12.0, 5.0, 12.0))
+        candidate = make_landscape_output(states=(30.0, 30.0, 30.0, 30.0))
+        scorer = ConformationalLandscapeScorer(
+            target,
+            max_states=2,
+            rmsd_scale=2.0,
+            outlier_threshold=4.0,
+        )
+
+        score = scorer.score(candidate)
+
+        assert score < 0.2
+
+    def test_target_distribution_includes_outlier_bin(self):
+        target = make_landscape_output(states=(5.0, 12.0, 5.0, 12.0))
+        scorer = ConformationalLandscapeScorer(target, max_states=2)
+
+        distribution = scorer.target_distribution()
+
+        assert len(distribution) == 3
+        assert sum(distribution) == pytest.approx(1.0)
+        assert distribution[-1] == 0.0
+
+    def test_missing_distance_matrices_scores_zero(self, empty_output):
+        target = make_landscape_output()
+        scorer = ConformationalLandscapeScorer(target, max_states=2)
+
+        assert scorer.score(empty_output) == 0.0

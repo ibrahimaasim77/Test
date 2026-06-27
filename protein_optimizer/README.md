@@ -2,7 +2,7 @@
 
 An industrial-grade evolutionary optimization framework for protein sequence design.
 
-Combines a **Genetic Algorithm (GA)** with **BioEmu** structural inference and **Meta ESM-2** guided mutations to iteratively evolve protein sequences toward higher structural fitness.
+Combines a **Genetic Algorithm (GA)** with **BioEmu** structural-ensemble inference and **Meta ESM-2** guided mutations to evolve protein sequences toward a desired **conformational landscape**, not just a single static fold.
 
 > **For AI assistants reading this:** This is a pure inference + optimization system. We are NOT training any models. ESM-2 is used only to propose biologically plausible mutations. BioEmu is used only to evaluate structural quality. The GA drives the search. Every component is modular and swappable.
 
@@ -28,10 +28,11 @@ Combines a **Genetic Algorithm (GA)** with **BioEmu** structural inference and *
 
 Given:
 - An **original protein sequence** (single-letter amino acid codes)
-- A **BioEmu model** that generates structural ensembles for any sequence
+- A **target conformational landscape** represented by a BioEmu structural ensemble
+- A **BioEmu model** that generates structural ensembles for candidate sequences
 - A **pretrained ESM-2 model** that predicts biologically plausible amino acid substitutions
 
-Goal: Find a mutated sequence with **higher structural fitness** than the original, using evolutionary search.
+Goal: Find a mutated sequence whose **equilibrium ensemble** matches the target landscape, using evolutionary search.
 
 We are NOT training models. We are doing inference-guided optimization.
 
@@ -154,7 +155,7 @@ To swap BioEmu for another model (AlphaFold, RoseTTAFold, etc.), subclass `BaseS
 
 Converts a `BioEmuOutput` into a single scalar fitness value in `[0, 1]`. This is the **central abstraction** — the GA sees only this number.
 
-Four built-in component scorers, each returning `[0, 1]`:
+Four default component scorers, each returning `[0, 1]`:
 
 | Scorer | What it measures | Higher = |
 |---|---|---|
@@ -162,6 +163,22 @@ Four built-in component scorers, each returning `[0, 1]`:
 | `ConsistencyScorer` | Inverse pairwise distance variance | More consistent ensemble |
 | `EnergyScorer` | Normalised energy proxy | Lower energy (more stable) |
 | `CompactnessScorer` | Radius of gyration vs. ideal compact fold | More compact structure |
+
+For the landscape-optimization proof of concept, add a target-aware scorer:
+
+```python
+from protein_optimizer import ConformationalLandscapeScorer, ScoringFunction
+
+target_output = bioemu_backend.infer_batch([target_sequence])[0]
+scoring_fn = ScoringFunction(cfg.scoring)
+scoring_fn.add_component(
+    ConformationalLandscapeScorer(target_output, max_states=5),
+    weight=0.6,
+    renormalize=True,
+)
+```
+
+`ConformationalLandscapeScorer` converts each ensemble sample's distance matrix into a structural fingerprint, clusters the target ensemble into reference states, compares state occupancy distributions with Jensen-Shannon similarity, and adds a structural proximity term. This gives the GA a bounded scalar objective for "how target-like is this mutant's landscape?"
 
 The composite fitness is a **weighted sum** of all components. Weights come from `ScoringConfig` and must sum to 1.0 (enforced at construction).
 
