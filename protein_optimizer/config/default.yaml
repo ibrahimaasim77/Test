@@ -1,0 +1,53 @@
+experiment_name: "protein_opt_v1"
+
+# Paste your protein sequence here (single-letter AA codes, no spaces)
+original_sequence: "MKTLLILAVLCLGFAQASGNIERPIDGFHGDLQSLIKAMFESRHITAYIEQLEELRQRQTAATGGMRQ"
+
+esm2:
+  model_name: "facebook/esm2_t33_650M_UR50D"
+  device: "cuda"           # "cpu" if no GPU
+  batch_size: 8
+  top_k_candidates: 5
+  temperature: 1.0
+  cache_dir: null           # null = HuggingFace default (~/.cache/huggingface)
+
+bioemu:
+  model_path: null          # null = HuggingFace default
+  device: "cuda"
+  batch_size: 4
+  num_samples: 10           # ensemble size per sequence
+  inference_steps: 50
+  mock: false               # true = synthetic outputs, no GPU required
+
+scoring:
+  stability_weight: 0.40
+  consistency_weight: 0.30
+  energy_weight: 0.20
+  diversity_penalty_weight: 0.10
+  normalize: true
+
+mutation:
+  strategy: "esm_guided"   # "random" or "esm_guided"
+  max_mutations_per_sequence: 3
+  allowed_positions: null   # null = all positions; or [5, 10, 15, ...]
+  mutation_rate: 0.1        # used only in random mode
+  crossover_strategy: "two_point"
+  crossover_rate: 0.7
+
+ga:
+  population_size: 50
+  max_generations: 100
+  elite_fraction: 0.10
+  selection_strategy: "tournament"
+  tournament_size: 5
+  convergence_threshold: 0.0001
+  convergence_patience: 10
+  seed: 42
+
+logging:
+  output_dir: "results"
+  log_level: "INFO"
+  save_every_n_generations: 10
+  track_diversity: true
+  track_mutation_history: true
+  export_format: "both"     # "json", "csv", or "both"

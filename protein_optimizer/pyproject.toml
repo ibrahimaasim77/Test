@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "protein-optimizer"
+version = "0.1.0"
+description = "Evolutionary protein sequence optimization using Genetic Algorithms, BioEmu, and ESM-2"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["protein", "optimization", "genetic-algorithm", "ESM-2", "BioEmu", "computational-biology"]
+
+dependencies = [
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "torch>=2.0",
+    "transformers>=4.38",     # ESM-2 via HuggingFace
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+]
+# Install BioEmu separately — requires CUDA and large model weights
+# bioemu = ["bioemu @ git+https://github.com/microsoft/bioemu"]
+
+[project.scripts]
+protein-optimizer = "main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["protein_optimizer*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["protein_optimizer"]
+omit = ["tests/*"]
