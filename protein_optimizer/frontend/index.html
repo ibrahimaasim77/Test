@@ -382,7 +382,70 @@
   </style>
 </head>
 <body>
+
+<!-- ── Sign in / Create account (client-side demo auth) ──────────── -->
+<style>
+  .auth-screen{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(circle at 50% 25%, #0a1a33, #02060f);}
+  .auth-screen.hidden{display:none;}
+  .auth-card{width:340px;background:#0b1220;border:1px solid var(--border,#1e2a3d);border-radius:14px;
+    padding:28px;box-shadow:0 24px 70px rgba(0,0,0,.55);}
+  .auth-logo{font-size:1.15rem;font-weight:700;text-align:center;margin-bottom:4px;color:var(--text,#e6eef8);}
+  .auth-sub{font-size:.72rem;color:var(--muted,#8aa0b8);text-align:center;margin-bottom:18px;}
+  .auth-tabs{display:flex;gap:6px;margin-bottom:16px;background:#02060f;border-radius:8px;padding:4px;}
+  .auth-tab{flex:1;padding:8px;border:none;background:none;color:var(--muted,#8aa0b8);font-size:.78rem;
+    border-radius:6px;cursor:pointer;font-family:inherit;}
+  .auth-tab.active{background:var(--accent,#2f6df6);color:#fff;}
+  .auth-field{margin-bottom:12px;}
+  .auth-field label{display:block;font-size:.7rem;color:var(--muted,#8aa0b8);margin-bottom:5px;}
+  .auth-field input{width:100%;box-sizing:border-box;padding:9px 11px;background:#02060f;
+    border:1px solid var(--border,#1e2a3d);border-radius:7px;color:var(--text,#e6eef8);font-family:inherit;font-size:.82rem;}
+  .auth-error{color:#f87171;font-size:.72rem;min-height:1.1em;margin-bottom:8px;}
+  .auth-submit{width:100%;padding:11px;background:var(--accent,#2f6df6);color:#fff;border:none;border-radius:8px;
+    font-size:.85rem;font-weight:600;cursor:pointer;font-family:inherit;}
+  .auth-hint{text-align:center;font-size:.66rem;color:var(--muted,#8aa0b8);margin-top:12px;}
+  .user-badge{position:absolute;top:22px;right:26px;display:flex;align-items:center;gap:10px;
+    font-size:.74rem;color:var(--muted,#8aa0b8);z-index:20;}
+  .user-badge button{background:none;border:1px solid var(--border,#1e2a3d);color:var(--muted,#8aa0b8);
+    border-radius:6px;padding:4px 10px;cursor:pointer;font-family:inherit;font-size:.7rem;}
+  .user-badge button:hover{color:#fff;}
+  /* History */
+  #historyPanel{display:none;margin-top:22px;}
+  #historyPanel.visible{display:block;}
+  .hist-list{display:flex;flex-direction:column;gap:8px;}
+  .hist-item{display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;
+    background:#02060f;border:1px solid var(--border,#1e2a3d);border-radius:8px;padding:10px 13px;
+    transition:border-color .15s;}
+  .hist-item:hover{border-color:var(--accent,#2f6df6);}
+  .hist-main{font-family:ui-monospace,monospace;font-size:.74rem;color:var(--text,#e6eef8);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .hist-meta{font-size:.7rem;color:var(--muted,#8aa0b8);white-space:nowrap;}
+  .hist-empty{font-size:.74rem;color:var(--muted,#8aa0b8);}
+</style>
+<div id="authScreen" class="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">🧬 Protein Optimizer</div>
+    <div class="auth-sub">Sign in to run and save your optimization history</div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tabSignin" onclick="authTab('signin')">Sign in</button>
+      <button class="auth-tab" id="tabSignup" onclick="authTab('signup')">Create account</button>
+    </div>
+    <div class="auth-field" id="nameField" style="display:none">
+      <label>Name</label><input id="authName" type="text" placeholder="Your name" />
+    </div>
+    <div class="auth-field"><label>Email</label><input id="authEmail" type="email" placeholder="you@example.com" /></div>
+    <div class="auth-field"><label>Password</label><input id="authPass" type="password" placeholder="••••••••" /></div>
+    <div class="auth-error" id="authError"></div>
+    <button class="auth-submit" id="authSubmit" onclick="authSubmit()">Sign in</button>
+    <div class="auth-hint">Demo accounts are stored locally in your browser.</div>
+  </div>
+</div>
+
 <div class="page">
+
+  <div class="user-badge" id="userBadge" style="display:none">
+    <span id="userName"></span>
+    <button onclick="signOut()">Sign out</button>
+  </div>
 
   <header class="header">
     <h1>Protein Optimizer</h1>
@@ -514,14 +577,6 @@
           </div>
         </div>
 
-        <div class="field">
-          <div class="toggle-group">
-            <div class="toggle-row">
-              <div><div class="tl">Mock BioEmu</div><div class="td">Synthetic outputs — no GPU required</div></div>
-              <label class="switch"><input type="checkbox" id="mockToggle" checked /><span class="slider"></span></label>
-            </div>
-          </div>
-        </div>
 
         <button class="acc-btn" id="advBtn" onclick="toggleAdv()">
           <svg class="acc-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
@@ -654,6 +709,14 @@
   </div>
 
   </div><!-- /.search-grid -->
+
+  <!-- ── History (per-account, saved locally) ──────────── -->
+  <div id="historyPanel">
+    <div class="card">
+      <div class="card-label">Your run history</div>
+      <div class="hist-list" id="histList"></div>
+    </div>
+  </div>
 
 </div>
 
@@ -1065,7 +1128,7 @@
       mode:             backendMode,
       target_llr:       currentMode === 'fit_to_llr' ? parseFloat(document.getElementById('targetLlr').value) : null,
       healthy_sequence: currentMode === 'fit_to_structure' ? _pdbSequence : null,
-      mock:             document.getElementById('mockToggle').checked,
+      mock:             true,   // synthetic scoring (toggle removed; behaviour unchanged)
       random_mutations: false,   // always ESM-2
       population_size:  parseInt(document.getElementById('popSize').value)    || 20,
       max_generations:  parseInt(document.getElementById('maxGen').value)     || 3,
@@ -1096,6 +1159,7 @@
           setRunning(false);
           const result = resolveResult(data.result);
           renderResults(result);
+          saveHistory(result);
           // Fold the best sequence found
           foldSequence(result.best_sequence);
         } else if (data.type === 'error') {
@@ -1118,6 +1182,7 @@
             clearInterval(_pollingTimer); actDone(); setRunning(false);
             const result = resolveResult(job.result);
             renderResults(result);
+            saveHistory(result);
             foldSequence(result.best_sequence);
           } else if (job.status === 'error') {
             clearInterval(_pollingTimer); setRunning(false);
@@ -1296,6 +1361,101 @@
   async function copySeq() {
     await navigator.clipboard.writeText(document.getElementById('rBestSeq').textContent).catch(() => {});
   }
+</script>
+<!-- ── Demo auth + per-account history (client-side, localStorage) ── -->
+<script>
+  let _authMode = 'signin';
+  function authTab(m) {
+    _authMode = m;
+    document.getElementById('tabSignin').classList.toggle('active', m === 'signin');
+    document.getElementById('tabSignup').classList.toggle('active', m === 'signup');
+    document.getElementById('nameField').style.display = m === 'signup' ? 'block' : 'none';
+    document.getElementById('authSubmit').textContent = m === 'signup' ? 'Create account' : 'Sign in';
+    document.getElementById('authError').textContent = '';
+  }
+  function authSubmit() {
+    const email = (document.getElementById('authEmail').value || '').trim();
+    const pass  = (document.getElementById('authPass').value  || '').trim();
+    const name  = (document.getElementById('authName').value  || '').trim();
+    const err   = document.getElementById('authError');
+    if (!email || !pass) { err.textContent = 'Enter your email and password.'; return; }
+    if (_authMode === 'signup' && !name) { err.textContent = 'Enter your name.'; return; }
+    let users = {}; try { users = JSON.parse(localStorage.getItem('po_users') || '{}'); } catch (e) {}
+    if (_authMode === 'signup') {
+      users[email] = { name, pass };
+      localStorage.setItem('po_users', JSON.stringify(users));
+    } else if (!users[email]) {
+      // Demo: signing in with an unknown email just creates the account.
+      users[email] = { name: email.split('@')[0], pass };
+      localStorage.setItem('po_users', JSON.stringify(users));
+    }
+    localStorage.setItem('po_currentUser', email);
+    showApp();
+  }
+  function signOut() { localStorage.removeItem('po_currentUser'); location.reload(); }
+  function showApp() {
+    const email = localStorage.getItem('po_currentUser');
+    let users = {}; try { users = JSON.parse(localStorage.getItem('po_users') || '{}'); } catch (e) {}
+    const name = (users[email] && users[email].name) || email;
+    document.getElementById('authScreen').classList.add('hidden');
+    const badge = document.getElementById('userBadge');
+    badge.style.display = 'flex';
+    document.getElementById('userName').textContent = name;
+    renderHistory();
+  }
+
+  // ── Per-account run history ──────────────────────────────────
+  function saveHistory(result) {
+    const email = localStorage.getItem('po_currentUser');
+    if (!email || !result) return;
+    const key = 'po_hist_' + email;
+    let list = []; try { list = JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) {}
+    const entry = Object.assign({}, result, {
+      ts: Date.now(),
+      reference_sequence: result.reference_sequence || window._refSeq || '',
+    });
+    list.unshift(entry);
+    list = list.slice(0, 25);
+    localStorage.setItem(key, JSON.stringify(list));
+    renderHistory();
+  }
+  function renderHistory() {
+    const email = localStorage.getItem('po_currentUser');
+    const panel = document.getElementById('historyPanel');
+    const listEl = document.getElementById('histList');
+    if (!email) { panel.classList.remove('visible'); return; }
+    let list = []; try { list = JSON.parse(localStorage.getItem('po_hist_' + email) || '[]'); } catch (e) {}
+    panel.classList.add('visible');
+    if (!list.length) { listEl.innerHTML = '<div class="hist-empty">No runs yet — your runs will appear here.</div>'; return; }
+    listEl.innerHTML = '';
+    list.forEach((h, i) => {
+      const sd = Math.abs((h.reference_llr ?? 0) - (h.target_parameter ?? 0));
+      const ed = Math.abs((h.best_llr ?? 0) - (h.target_parameter ?? 0));
+      const pct = sd > 0 ? Math.min(100, (sd - ed) / sd * 100) : 100;
+      const d = new Date(h.ts);
+      const div = document.createElement('div');
+      div.className = 'hist-item';
+      div.onclick = () => loadHistoryItem(i);
+      div.innerHTML =
+        `<span class="hist-main">${(h.reference_sequence || '').slice(0, 30)}…</span>` +
+        `<span class="hist-meta">${d.toLocaleString()} · best ${(+h.best_llr).toFixed(3)} · ${pct.toFixed(0)}%</span>`;
+      listEl.appendChild(div);
+    });
+  }
+  function loadHistoryItem(i) {
+    const email = localStorage.getItem('po_currentUser');
+    if (!email) return;
+    let list = []; try { list = JSON.parse(localStorage.getItem('po_hist_' + email) || '[]'); } catch (e) {}
+    const h = list[i];
+    if (!h) return;
+    window._refSeq = h.reference_sequence || window._refSeq;
+    renderResults(h);
+    document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    if (localStorage.getItem('po_currentUser')) showApp();
+  });
 </script>
 </body>
 </html>
