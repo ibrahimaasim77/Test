@@ -62,5 +62,10 @@ cat <<'EOF'
  NOTE: 100 samples x many candidates is slow. For a first
  real test, shrink the search:
        --set ga.population_size=20 --set ga.max_generations=2
+
+ HuggingFace: model weights download once with NO token needed
+ (the "set a HF_TOKEN" warning is already suppressed). After the
+ first run has cached the weights, you can go fully offline with:
+       export HF_HUB_OFFLINE=1
 ============================================================
 EOF

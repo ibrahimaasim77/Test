@@ -23,8 +23,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
+
+# Silence HuggingFace Hub's "set a HF_TOKEN" warning — we intentionally use
+# unauthenticated public model downloads (no account/token needed). Must run
+# before transformers / huggingface_hub are imported.
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 sys.path.insert(0, str(Path(__file__).parent))
 
