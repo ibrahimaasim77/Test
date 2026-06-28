@@ -10,11 +10,15 @@ Then open http://localhost:8000
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
+import queue
 import sys
 import threading
 import time
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -25,8 +29,8 @@ logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from protein_optimizer import OptimizationConfig
@@ -41,6 +45,7 @@ STATIC_DIR = Path(__file__).parent / "frontend"
 CONFIG_DIR = Path(__file__).parent / "config"
 
 jobs: Dict[str, Dict[str, Any]] = {}
+job_queues: Dict[str, queue.Queue] = {}
 
 
 class RunRequest(BaseModel):
@@ -63,12 +68,17 @@ def serve_index():
 @app.post("/api/run")
 def start_run(req: RunRequest):
     job_id = str(uuid.uuid4())[:8]
+    q: queue.Queue = queue.Queue()
     jobs[job_id] = {
         "status": "running",
         "result": None,
         "error": None,
         "started_at": time.time(),
     }
+    job_queues[job_id] = q
+
+    def progress_callback(event: dict) -> None:
+        q.put(event)
 
     def run_job() -> None:
         try:
@@ -91,9 +101,9 @@ def start_run(req: RunRequest):
                 cfg.healthy_sequence = ""
 
             search = BudgetedEvolutionarySearch(cfg, verbose=False)
-            result = search.run()
+            result = search.run(progress_callback=progress_callback)
 
-            jobs[job_id]["result"] = {
+            result_data = {
                 "reference_llr": result.reference_llr,
                 "best_llr": result.best_llr,
                 "best_sequence": result.best_sequence,
@@ -105,12 +115,18 @@ def start_run(req: RunRequest):
                 "top10": [
                     {"sequence": seq, "llr": llr} for seq, llr in result.ranked(10)
                 ],
+                "top20": [
+                    {"sequence": seq, "llr": llr} for seq, llr in result.ranked(20)
+                ],
             }
+            jobs[job_id]["result"] = result_data
             jobs[job_id]["status"] = "done"
+            q.put({"type": "done", "result": result_data})
             logger.info("Job %s completed in %.1fs", job_id, result.total_wall_time_s)
         except Exception as exc:
             jobs[job_id]["status"] = "error"
             jobs[job_id]["error"] = str(exc)
+            q.put({"type": "error", "message": str(exc)})
             logger.exception("Job %s failed", job_id)
 
     threading.Thread(target=run_job, daemon=True).start()
@@ -122,6 +138,89 @@ def get_job(job_id: str):
     if job_id not in jobs:
         return JSONResponse({"error": "Job not found"}, status_code=404)
     return jobs[job_id]
+
+
+def _queue_get(q: queue.Queue, timeout: float = 1.0):
+    try:
+        return q.get(block=True, timeout=timeout)
+    except queue.Empty:
+        return None
+
+
+@app.get("/api/job/{job_id}/stream")
+async def stream_job(job_id: str):
+    if job_id not in jobs:
+        return JSONResponse({"error": "Job not found"}, status_code=404)
+
+    job = jobs[job_id]
+
+    # Already finished — serve result immediately (queue may be drained)
+    if job["status"] in ("done", "error"):
+        async def immediate():
+            if job["status"] == "done":
+                yield f"data: {json.dumps({'type': 'done', 'result': job['result']})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'message': job.get('error', '')})}\n\n"
+
+        return StreamingResponse(
+            immediate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    # Job still running — stream live from queue
+    q = job_queues.get(job_id)
+    if q is None:
+        return JSONResponse({"error": "Queue not available"}, status_code=500)
+
+    loop = asyncio.get_running_loop()
+
+    async def generate():
+        while True:
+            event = await loop.run_in_executor(None, _queue_get, q, 1.0)
+            if event is None:
+                yield ": keepalive\n\n"
+                continue
+            yield f"data: {json.dumps(event)}\n\n"
+            if event.get("type") in ("done", "error"):
+                break
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+VALID_AA = set("ACDEFGHIKLMNPQRSTVWY")
+
+
+@app.post("/api/fold")
+async def fold_sequence(request: Request):
+    """Proxy ESMFold structure prediction through the ESM Atlas public API."""
+    seq = (await request.body()).decode().strip().upper()
+    if not seq or not all(c in VALID_AA for c in seq):
+        return JSONResponse({"error": "Invalid sequence"}, status_code=400)
+    if len(seq) > 400:
+        return JSONResponse({"error": "Sequence too long (max 400)"}, status_code=400)
+
+    def _call_esm():
+        req = urllib.request.Request(
+            "https://api.esmatlas.com/foldSequence/v1/pdb/",
+            data=seq.encode(),
+            headers={"Content-Type": "text/plain"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.read()
+
+    loop = asyncio.get_running_loop()
+    try:
+        pdb = await loop.run_in_executor(None, _call_esm)
+        return Response(content=pdb, media_type="text/plain")
+    except Exception as exc:
+        logger.warning("ESMFold failed (len=%d): %s", len(seq), exc)
+        return JSONResponse({"error": "Structure prediction unavailable"}, status_code=503)
 
 
 if __name__ == "__main__":
