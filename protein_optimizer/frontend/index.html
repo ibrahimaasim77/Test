@@ -380,25 +380,82 @@
     .llr-mono{ font-family:'JetBrains Mono',monospace; font-size:.75rem; color:var(--accent-dark); font-weight:500; }
     .seq-td{ font-family:'JetBrains Mono',monospace; font-size:.68rem; color:var(--muted); word-break:break-all; max-width:380px; }
   </style>
+
+  <!-- ── Polish layer: refined depth, hero, motion ───────────────── -->
+  <style>
+    body{
+      background:
+        radial-gradient(820px 460px at 8% -10%, rgba(5,150,105,.10), transparent 60%),
+        radial-gradient(760px 480px at 102% -4%, rgba(20,184,120,.08), transparent 55%),
+        linear-gradient(180deg, #f4faf4 0%, #e9f2e9 100%);
+      background-attachment:fixed;
+    }
+    ::selection{ background:rgba(5,150,105,.18); }
+
+    /* Cards: softer border, layered shadow, smoother lift */
+    .card{
+      border:1px solid rgba(16,40,24,.07);
+      border-radius:18px;
+      box-shadow:0 1px 2px rgba(16,40,24,.04), 0 10px 30px -14px rgba(16,40,24,.16);
+    }
+    .card:hover{ box-shadow:0 2px 6px rgba(16,40,24,.06), 0 22px 48px -18px rgba(16,40,24,.24); transform:translateY(-2px); }
+
+    /* Hero */
+    .header{ margin-bottom:42px; }
+    .eyebrow{
+      display:inline-flex; align-items:center; gap:8px; margin:0 auto 18px;
+      padding:6px 14px; border-radius:999px; font-size:.66rem; font-weight:600;
+      letter-spacing:.1em; text-transform:uppercase; color:var(--accent-dark);
+      background:rgba(5,150,105,.07); border:1px solid rgba(5,150,105,.16);
+    }
+    .eyebrow .dot{ width:6px; height:6px; border-radius:50%; background:var(--accent);
+      box-shadow:0 0 0 4px rgba(5,150,105,.15); animation:pulse 2s ease-in-out infinite; }
+    h1{ background:linear-gradient(176deg,#0c2117 0%,#1f4a34 60%,#0c2117 100%);
+      -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+    .tagline{ max-width:540px; }
+
+    /* Run button: gradient + depth */
+    .btn-run{ border-radius:13px; background:linear-gradient(180deg,#06a36d,#047455);
+      box-shadow:0 8px 22px -8px rgba(5,150,105,.5); }
+    .btn-run:hover{ background:linear-gradient(180deg,#07b277,#046a4c);
+      box-shadow:0 12px 30px -10px rgba(5,150,105,.55); }
+
+    /* Slim brand scrollbar */
+    *{ scrollbar-width:thin; scrollbar-color:rgba(5,150,105,.4) transparent; }
+    *::-webkit-scrollbar{ width:11px; height:11px; }
+    *::-webkit-scrollbar-thumb{ background:rgba(5,150,105,.32); border-radius:9px;
+      border:3px solid transparent; background-clip:content-box; }
+    *::-webkit-scrollbar-thumb:hover{ background:rgba(5,150,105,.55); background-clip:content-box; }
+
+    /* Scroll reveal (added via JS; fail-safe if JS is off) */
+    .reveal{ opacity:0; transform:translateY(28px) scale(.985);
+      transition:opacity .75s cubic-bezier(.16,1,.3,1), transform .75s cubic-bezier(.16,1,.3,1);
+      will-change:opacity,transform; }
+    .reveal.in{ opacity:1; transform:none; }
+    @media (prefers-reduced-motion: reduce){ .reveal{ opacity:1 !important; transform:none !important; transition:none; } }
+  </style>
 </head>
 <body>
 
 <!-- ── Sign in / Create account (client-side demo auth) ──────────── -->
 <style>
   .auth-screen{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;
-    background:radial-gradient(circle at 50% 25%, #0a1a33, #02060f);}
+    background:
+      radial-gradient(700px 460px at 50% -12%, rgba(5,150,105,.16), transparent 60%),
+      linear-gradient(180deg,#f4faf4,#e3eee3);}
   .auth-screen.hidden{display:none;}
-  .auth-card{width:340px;background:#0b1220;border:1px solid var(--border,#1e2a3d);border-radius:14px;
-    padding:28px;box-shadow:0 24px 70px rgba(0,0,0,.55);}
+  .auth-card{width:360px;background:#fff;border:1px solid rgba(16,40,24,.08);border-radius:20px;
+    padding:32px;box-shadow:0 30px 70px -24px rgba(16,40,24,.28), 0 2px 6px rgba(16,40,24,.05);
+    animation:fadeUp .5s cubic-bezier(.16,1,.3,1) both;}
   .auth-logo{font-size:1.15rem;font-weight:700;text-align:center;margin-bottom:4px;color:var(--text,#e6eef8);}
   .auth-sub{font-size:.72rem;color:var(--muted,#8aa0b8);text-align:center;margin-bottom:18px;}
-  .auth-tabs{display:flex;gap:6px;margin-bottom:16px;background:#02060f;border-radius:8px;padding:4px;}
+  .auth-tabs{display:flex;gap:6px;margin-bottom:16px;background:#f4f8f4;border-radius:8px;padding:4px;}
   .auth-tab{flex:1;padding:8px;border:none;background:none;color:var(--muted,#8aa0b8);font-size:.78rem;
     border-radius:6px;cursor:pointer;font-family:inherit;}
   .auth-tab.active{background:var(--accent,#2f6df6);color:#fff;}
   .auth-field{margin-bottom:12px;}
   .auth-field label{display:block;font-size:.7rem;color:var(--muted,#8aa0b8);margin-bottom:5px;}
-  .auth-field input{width:100%;box-sizing:border-box;padding:9px 11px;background:#02060f;
+  .auth-field input{width:100%;box-sizing:border-box;padding:9px 11px;background:#f4f8f4;
     border:1px solid var(--border,#1e2a3d);border-radius:7px;color:var(--text,#e6eef8);font-family:inherit;font-size:.82rem;}
   .auth-error{color:#f87171;font-size:.72rem;min-height:1.1em;margin-bottom:8px;}
   .auth-submit{width:100%;padding:11px;background:var(--accent,#2f6df6);color:#fff;border:none;border-radius:8px;
@@ -414,7 +471,7 @@
   #historyPanel.visible{display:block;}
   .hist-list{display:flex;flex-direction:column;gap:8px;}
   .hist-item{display:flex;justify-content:space-between;align-items:center;gap:12px;cursor:pointer;
-    background:#02060f;border:1px solid var(--border,#1e2a3d);border-radius:8px;padding:10px 13px;
+    background:#f4f8f4;border:1px solid var(--border,#1e2a3d);border-radius:8px;padding:10px 13px;
     transition:border-color .15s;}
   .hist-item:hover{border-color:var(--accent,#2f6df6);}
   .hist-main{font-family:ui-monospace,monospace;font-size:.74rem;color:var(--text,#e6eef8);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -448,6 +505,7 @@
   </div>
 
   <header class="header">
+    <div class="eyebrow"><span class="dot"></span> In silico directed evolution</div>
     <h1>Protein Optimizer</h1>
     <p class="tagline">Evolve protein sequences toward target conformational landscapes using ESM-2 guided mutations and BioEmu structural scoring</p>
   </header>
@@ -1455,6 +1513,21 @@
 
   window.addEventListener('DOMContentLoaded', () => {
     if (localStorage.getItem('po_currentUser')) showApp();
+
+    // Scroll-reveal: fade/slide sections in as they enter the viewport.
+    // Applied via JS so the page still works if JS is disabled.
+    if (!window.matchMedia || !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const targets = [...document.querySelectorAll('.card')]
+        .filter(el => !el.closest('#results, #activity, #gaHeader, #historyPanel'));
+      targets.forEach(el => el.classList.add('reveal'));
+      const io = new IntersectionObserver((entries) => {
+        entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+      }, { threshold: 0.06, rootMargin: '0px 0px -7% 0px' });
+      targets.forEach((el, i) => {
+        el.style.transitionDelay = Math.min(i * 70, 280) + 'ms';
+        io.observe(el);
+      });
+    }
   });
 </script>
 </body>
