@@ -140,13 +140,22 @@ class BudgetedEvolutionarySearch:
             return llr
         return -abs(llr - self._target)
 
-    def run(self) -> EvolutionarySearchResult:
+    def run(self, progress_callback=None) -> EvolutionarySearchResult:
         """Execute the full search. Returns EvolutionarySearchResult."""
+
+        def emit(event: dict) -> None:
+            if progress_callback is not None:
+                try:
+                    progress_callback(event)
+                except Exception:
+                    pass
+
         start = time.time()
         original = self.config.original_sequence
 
         # Score the reference (defective) sequence first
         logger.info("Scoring reference sequence (len=%d) ...", len(original))
+        emit({"type": "reference_scoring", "seq_len": len(original)})
         ref_output = self._bioemu.infer_batch([original])[0]
         reference_llr = self._extract_llr(ref_output)
         logger.info("Reference LLR = %.4f", reference_llr)
@@ -164,6 +173,14 @@ class BudgetedEvolutionarySearch:
             logger.info("Target parameter (user-defined) = %.4f", self._target)
         else:
             logger.info("No target set — maximising LLR.")
+
+        emit({
+            "type": "reference_scored",
+            "llr": reference_llr,
+            "seq_len": len(original),
+            "target": self._target,
+            "mode": "maximize" if self._target is None else "fit",
+        })
 
         if self._verbose:
             self._print_header("REFERENCE SEQUENCE")
@@ -189,6 +206,13 @@ class BudgetedEvolutionarySearch:
                 if self._verbose:
                     self._print_round_header(round_idx + 1, self._max_rounds,
                                              f"generating {remaining} candidates via {src}")
+                emit({
+                    "type": "generating",
+                    "round": round_idx + 1,
+                    "total_rounds": self._max_rounds,
+                    "method": "esm2" if self._use_esm else "random",
+                    "count": remaining,
+                })
                 if self._use_esm:
                     logger.info("Round 1 — ESM-2 generating %d candidates ...", remaining)
                     candidates = self._esm2_generate(current_parents, remaining)
@@ -207,6 +231,15 @@ class BudgetedEvolutionarySearch:
                     "Round %d — crossover of %d parents (%d variable positions) → %d candidates",
                     round_idx + 1, len(current_parents), n_variable, remaining,
                 )
+                emit({
+                    "type": "generating",
+                    "round": round_idx + 1,
+                    "total_rounds": self._max_rounds,
+                    "method": "crossover",
+                    "count": remaining,
+                    "variable_positions": n_variable,
+                    "elite_size": self._n_elite,
+                })
                 candidates = self._crossover.generate_offspring(current_parents, remaining)
 
             new_candidates = [s for s in candidates if s not in all_scores and s != original]
@@ -219,6 +252,7 @@ class BudgetedEvolutionarySearch:
             if self._verbose:
                 print(f"  Scoring {len(new_candidates)} candidates with BioEmu...", flush=True)
 
+            emit({"type": "scoring", "round": round_idx + 1, "count": len(new_candidates)})
             logger.info("Round %d — scoring %d sequences with BioEmu ...", round_idx + 1, len(new_candidates))
             outputs = self._bioemu.infer_batch(new_candidates)
             round_scores: Dict[str, float] = {}
@@ -255,6 +289,16 @@ class BudgetedEvolutionarySearch:
                 "Round %d complete | scored=%d | best_so_far=%.4f (%s...)",
                 round_idx + 1, len(all_scores), best_this_round[1], best_this_round[0][:15],
             )
+
+            emit({
+                "type": "round_scored",
+                "round": round_idx + 1,
+                "total_rounds": self._max_rounds,
+                "scores": [{"seq": s, "llr": l} for s, l in round_scores.items()],
+                "top20": [{"seq": s, "llr": all_scores[s]} for s in top20],
+                "best_llr": best_this_round[1],
+                "total_evaluated": len(all_scores),
+            })
 
             if self._verbose:
                 col2 = "dist→goal" if self._target is not None else "δ vs ref"
