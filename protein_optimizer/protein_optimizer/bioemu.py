@@ -215,6 +215,7 @@ class BioEmuWrapper(BaseStructuralBackend):
                 output_dir=tmpdir,
                 batch_size_100=self.config.batch_size,
                 model_name=model_name,
+                filter_samples=False,  # skip hpacker sidechain relaxation (TF/protobuf conflict)
             )
             return self._parse_output_dir(sequence, Path(tmpdir))
 
