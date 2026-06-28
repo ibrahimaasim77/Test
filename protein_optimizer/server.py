@@ -43,6 +43,7 @@ app = FastAPI(title="Protein Optimizer")
 
 STATIC_DIR = Path(__file__).parent / "frontend"
 CONFIG_DIR = Path(__file__).parent / "config"
+SHARED_RUNS_DIR = Path(__file__).parent / "shared_runs"
 
 jobs: Dict[str, Dict[str, Any]] = {}
 job_queues: Dict[str, queue.Queue] = {}
@@ -63,6 +64,18 @@ class RunRequest(BaseModel):
 @app.get("/")
 def serve_index():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+@app.get("/api/saved-trajectory/{run}/{which}")
+def saved_trajectory(run: str, which: str):
+    """Serve a pre-converted multi-frame PDB of a saved BioEmu run (real .xtc
+    ensemble), for animation in the 3D viewer. Read-only, path-sanitised."""
+    if which not in ("reference", "best_mutant") or "/" in run or ".." in run:
+        return JSONResponse({"error": "Invalid trajectory"}, status_code=400)
+    path = SHARED_RUNS_DIR / run / which / "ensemble.pdb"
+    if not path.is_file():
+        return JSONResponse({"error": "Trajectory not found"}, status_code=404)
+    return FileResponse(str(path), media_type="text/plain")
 
 
 @app.post("/api/run")
