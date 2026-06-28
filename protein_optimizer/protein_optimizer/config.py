@@ -43,6 +43,8 @@ class BioEmuConfig:
     inference_steps: int = 50
     # Set mock=True to run with synthetic outputs (CI / no-GPU environments)
     mock: bool = False
+    # Where to write .pdb / .xtc trajectory files for the reference and best sequences
+    trajectory_dir: str = "results/trajectories"
 
 
 @dataclass

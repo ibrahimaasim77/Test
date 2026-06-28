@@ -1,0 +1,58 @@
+experiment_name: "evolutionary_search_v1"
+
+# The reference/starting sequence to score and mutate
+
+# No wildtype target — fitness is determined purely by BioEmu LLR
+wildtype_sequence: ""
+
+esm2:
+  model_name: "facebook/esm2_t33_650M_UR50D"
+  device: "cuda"
+  batch_size: 8
+  top_k_candidates: 5
+  temperature: 1.0
+  cache_dir: null
+
+bioemu:
+  model_path: null      # null = use HuggingFace default weights
+  device: "cuda"
+  batch_size: 4         # sequences per BioEmu batch (GPU memory bound)
+  num_samples: 10       # conformational ensemble size per sequence
+  inference_steps: 50
+  mock: false           # set to true for GPU-free testing
+  trajectory_dir: "results/trajectories"   # where .pdb / .xtc files are saved
+
+scoring:
+  stability_weight: 0.40
+  consistency_weight: 0.30
+  energy_weight: 0.20
+  diversity_penalty_weight: 0.10
+  normalize: true
+  wildtype_proximity_weight: 0.30
+
+mutation:
+  strategy: "esm_guided"           # ESM-2 used for round-1 proposals
+  max_mutations_per_sequence: 3    # max point mutations per ESM-2 proposal
+  allowed_positions: null          # null = all positions
+  mutation_rate: 0.1
+  crossover_strategy: "two_point"
+  crossover_rate: 0.7
+
+ga:
+  population_size: 100     # mutations generated per round
+  max_generations: 5       # 5 rounds × 100 = 500 total mutations
+  elite_fraction: 0.20     # top 20% = 20 sequences kept as parents
+  selection_strategy: "top_k"
+  tournament_size: 5
+  convergence_threshold: 0.0001
+  convergence_patience: 10
+  seed: 42
+  n_stages: 5
+
+logging:
+  output_dir: "results/evolutionary"
+  log_level: "INFO"
+  save_every_n_generations: 1
+  track_diversity: true
+  track_mutation_history: true
+  export_format: "both"

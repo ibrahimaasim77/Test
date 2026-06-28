@@ -61,6 +61,13 @@ class ConformationSample:
     # Solvent accessible surface area per residue, shape (L,)
     sasa: Optional[np.ndarray] = None
 
+    # BioEmu importance sampling weight (log scale). Present in real NPZ output.
+    log_weight: Optional[float] = None
+
+    # Raw Cα coordinates (L, 3) in Ångströms. Kept in memory so we can write
+    # trajectory files after the search without re-running BioEmu.
+    ca_coords: Optional[np.ndarray] = None
+
 
 @dataclass
 class BioEmuOutput:
@@ -82,6 +89,11 @@ class BioEmuOutput:
     mean_rg: Optional[float] = None
     rg_std: Optional[float] = None
     pairwise_distance_variance: Optional[float] = None   # structural consistency proxy
+
+    # Log-partition function estimated from BioEmu importance weights.
+    # Computed as: logsumexp(log_weights) - log(N)
+    # Present only when the NPZ output contains a 'log_weights' array.
+    log_partition: Optional[float] = None
 
     @property
     def ensemble_size(self) -> int:
@@ -139,7 +151,7 @@ class BaseStructuralBackend(ABC):
         if not output.samples:
             return output
 
-        confidences, energies, rgs = [], [], []
+        confidences, energies, rgs, log_weights = [], [], [], []
         distance_mats = []
 
         for sample in output.samples:
@@ -151,6 +163,8 @@ class BaseStructuralBackend(ABC):
                 rgs.append(sample.radius_of_gyration)
             if sample.distance_matrix is not None:
                 distance_mats.append(sample.distance_matrix.flatten())
+            if sample.log_weight is not None:
+                log_weights.append(sample.log_weight)
 
         if confidences:
             output.mean_confidence = float(np.mean(confidences))
@@ -164,6 +178,10 @@ class BaseStructuralBackend(ABC):
         if distance_mats:
             stacked = np.stack(distance_mats, axis=0)   # (n_samples, L*L)
             output.pairwise_distance_variance = float(np.mean(np.var(stacked, axis=0)))
+        if log_weights:
+            # log-partition: logsumexp(log_weights) - log(N)
+            lw = np.array(log_weights)
+            output.log_partition = float(np.max(lw) + np.log(np.sum(np.exp(lw - np.max(lw)))) - np.log(len(lw)))
 
         return output
 
@@ -255,6 +273,9 @@ class BioEmuWrapper(BaseStructuralBackend):
         BioEmu stores Cα (and backbone) coordinates under keys like 'pos' or
         'positions'. Shape is typically (n_samples, L, 3) for Cα-only or
         (n_samples, L, n_atoms, 3) for full backbone — we extract Cα (index 1).
+
+        BioEmu v1.4+ also writes 'log_weights' (shape: (n_samples,)) — importance
+        sampling weights used to compute the log-partition function / actual LLR.
         """
         samples: List[ConformationSample] = []
         try:
@@ -277,9 +298,21 @@ class BioEmuWrapper(BaseStructuralBackend):
         elif coords.ndim == 4:                      # (N, L, atoms, 3) — take Cα
             coords = coords[:, :, 1, :]
 
+        # Extract per-sample importance weights if present (BioEmu v1.4+)
+        log_weights: Optional[np.ndarray] = None
+        for key in ("log_weights", "log_weight", "weights"):
+            if key in data.files:
+                arr = data[key]
+                if isinstance(arr, np.ndarray) and arr.ndim == 1 and len(arr) == len(coords):
+                    log_weights = arr.astype(float)
+                    logger.debug("Found '%s' in %s — using actual BioEmu LLR", key, path.name)
+                    break
+
         for i in range(len(coords)):
             sample = self._coords_to_sample(coords[i])
             if sample is not None:
+                if log_weights is not None:
+                    sample.log_weight = float(log_weights[i])
                 samples.append(sample)
 
         return samples
@@ -354,7 +387,96 @@ class BioEmuWrapper(BaseStructuralBackend):
             distance_matrix=dist_matrix,
             radius_of_gyration=rg,
             sasa=None,
+            ca_coords=ca_coords,
         )
+
+
+# ---------------------------------------------------------------------------
+# Trajectory file export (PDB + XTC)
+# ---------------------------------------------------------------------------
+
+_AA3: Dict[str, str] = {
+    'A': 'ALA', 'R': 'ARG', 'N': 'ASN', 'D': 'ASP', 'C': 'CYS',
+    'E': 'GLU', 'Q': 'GLN', 'G': 'GLY', 'H': 'HIS', 'I': 'ILE',
+    'L': 'LEU', 'K': 'LYS', 'M': 'MET', 'F': 'PHE', 'P': 'PRO',
+    'S': 'SER', 'T': 'THR', 'W': 'TRP', 'Y': 'TYR', 'V': 'VAL',
+}
+
+
+def write_trajectory_files(output: "BioEmuOutput", out_dir: Path) -> Dict[str, Path]:
+    """
+    Write structure and trajectory files for one BioEmuOutput.
+
+    Always writes:
+      structure.pdb  — Cα-only PDB of the highest-weight sample
+
+    Writes if MDTraj is installed:
+      trajectory.xtc — all ensemble samples as an XTC trajectory
+
+    Returns a dict mapping file type ('pdb', 'xtc') → Path.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    samples_with_coords = [s for s in output.samples if s.ca_coords is not None]
+    if not samples_with_coords:
+        logger.warning("No Cα coordinates available — skipping trajectory export for %s...", output.sequence[:10])
+        return {}
+
+    saved: Dict[str, Path] = {}
+
+    # Best sample = highest log_weight; fallback to first sample
+    best = max(
+        samples_with_coords,
+        key=lambda s: s.log_weight if s.log_weight is not None else 0.0,
+    )
+    pdb_path = out_dir / "structure.pdb"
+    _write_pdb(best.ca_coords, pdb_path, output.sequence)
+    saved["pdb"] = pdb_path
+
+    xtc_path = _write_xtc(samples_with_coords, out_dir / "trajectory.xtc")
+    if xtc_path:
+        saved["xtc"] = xtc_path
+
+    return saved
+
+
+def _write_pdb(ca_coords: np.ndarray, path: Path, sequence: str = "") -> None:
+    """Write a Cα-only PDB file from a (L, 3) coordinate array."""
+    with open(path, "w") as fh:
+        for i, (x, y, z) in enumerate(ca_coords):
+            res_name = _AA3.get(sequence[i], "UNK") if i < len(sequence) else "UNK"
+            fh.write(
+                f"ATOM  {i + 1:5d}  CA  {res_name} A{i + 1:4d}    "
+                f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00           C  \n"
+            )
+        fh.write("END\n")
+
+
+def _write_xtc(samples: List["ConformationSample"], path: Path) -> Optional[Path]:
+    """Write all samples as a multi-frame XTC trajectory using MDTraj."""
+    try:
+        import mdtraj as md
+
+        L = len(samples[0].ca_coords)
+        # MDTraj expects coordinates in nm; BioEmu outputs Å
+        coords_nm = np.array([s.ca_coords for s in samples]) / 10.0  # (N, L, 3)
+
+        top = md.Topology()
+        chain = top.add_chain()
+        for _ in range(L):
+            res = top.add_residue("ALA", chain)
+            top.add_atom("CA", md.element.carbon, res)
+
+        traj = md.Trajectory(coords_nm, top)
+        traj.save_xtc(str(path))
+        return path
+    except ImportError:
+        logger.info("MDTraj not installed — XTC export skipped (pip install mdtraj to enable)")
+        return None
+    except Exception as exc:
+        logger.warning("XTC export failed: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -373,9 +495,14 @@ class MockBioEmuBackend(BaseStructuralBackend):
     def _run_inference(self, sequence: str) -> BioEmuOutput:
         rng = np.random.default_rng(seed=abs(hash(sequence)) % (2**31))
 
+        # Deterministic sequence-level quality score (used to anchor log_weights)
+        # Ensures different sequences produce different log-partition values
+        seq_score = float(rng.uniform(-5.0, -1.0))
+
         output = BioEmuOutput(sequence=sequence)
+        L = len(sequence)
         for _ in range(self.config.num_samples):
-            L = len(sequence)
+            log_w = float(rng.normal(seq_score, 0.5))
             output.samples.append(
                 ConformationSample(
                     per_residue_confidence=rng.uniform(60, 95, size=L),
@@ -383,6 +510,7 @@ class MockBioEmuBackend(BaseStructuralBackend):
                     distance_matrix=rng.uniform(3.5, 20.0, size=(L, L)),
                     radius_of_gyration=float(rng.uniform(10, 30)),
                     sasa=rng.uniform(0, 150, size=L),
+                    log_weight=log_w,
                 )
             )
         return output
