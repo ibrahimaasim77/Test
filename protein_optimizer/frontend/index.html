@@ -547,7 +547,7 @@
   <!-- ── Results ──────────────────────────────────────── -->
   <div id="results">
     <div class="card">
-      <div class="card-label">Results</div>
+      <div class="card-label">Results <span id="demoBadge" style="display:none;font-size:.66rem;font-weight:700;letter-spacing:.04em;color:#f59e0b;border:1px solid #f59e0b;border-radius:6px;padding:2px 7px;margin-left:8px;vertical-align:middle">DEMO DATA</span></div>
 
       <div class="stats-grid">
         <div class="stat-card">
@@ -588,7 +588,7 @@
       <div class="section-heading">Top 20 mutants</div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th style="width:46px">Rank</th><th style="width:100px">LLR</th><th>Sequence</th></tr></thead>
+          <thead><tr><th style="width:46px">Rank</th><th style="width:100px">LLR</th><th>Sequence</th><th style="width:150px">Mutations</th></tr></thead>
           <tbody id="mutantsBody"></tbody>
         </table>
       </div>
@@ -1067,15 +1067,58 @@
       const rank = i + 1;
       const cls  = rank===1?'rn-1':rank===2?'rn-2':rank===3?'rn-3':'rn-n';
       const seq  = m.sequence || m.seq || '';
+      const muts = m.mutations || mutationsVsRef(r.reference_sequence, seq);
       const tr   = document.createElement('tr');
-      tr.innerHTML = `<td><span class="rn ${cls}">${rank}</span></td><td><span class="llr-mono">${m.llr.toFixed(4)}</span></td><td class="seq-td">${seq}</td>`;
+      tr.innerHTML = `<td><span class="rn ${cls}">${rank}</span></td><td><span class="llr-mono">${m.llr.toFixed(4)}</span></td><td class="seq-td">${seq}</td><td style="font-family:ui-monospace,monospace;font-size:.76rem;color:var(--accent)">${muts}</td>`;
       tbody.appendChild(tr);
     });
 
+    document.getElementById('demoBadge').style.display = r._demo ? 'inline-block' : 'none';
+
     const res = document.getElementById('results');
     res.classList.add('visible');
-    res.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!r._demo) res.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
+
+  // Compute point mutations (e.g. "L7E") of a sequence vs. the reference.
+  function mutationsVsRef(ref, seq) {
+    if (!ref || !seq) return '';
+    const out = [];
+    const n = Math.min(ref.length, seq.length);
+    for (let i = 0; i < n; i++) if (ref[i] !== seq[i]) out.push(`${ref[i]}${i + 1}${seq[i]}`);
+    return out.length ? out.join(', ') : '(none)';
+  }
+
+  // ── Demo placeholder (clearly labelled "DEMO DATA") ──────────────
+  // Real, pipeline-generated mock output for the L5Y case. Shown on page
+  // load so the UI is populated; replaced the moment a real run completes.
+  const DEMO_RESULT = {
+    _demo: true,
+    reference_llr: -3.2273,
+    best_llr: -0.9751,
+    target_parameter: -1.0077,
+    improved: true,
+    rounds_run: 3,
+    total_evaluated: 37,
+    wall_time_s: 0.1,
+    reference_sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDDATKTFTVTAKDSHADRVRELAQRLRQRPRVERVEITEVTE',
+    best_sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDEATKTFTVTAKDSHADRVRELAQRLRQCPRVERHEITEVTE',
+    top10: [
+      { llr: -0.9751, sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDEATKTFTVTAKDSHADRVRELAQRLRQCPRVERHEITEVTE', mutations: 'D47E, R74C, V80H' },
+      { llr: -0.8656, sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDDATKTFTVTAKDSHADRVRELAQRLWQRPRVERVEITEVTE', mutations: 'R72W' },
+      { llr: -1.2308, sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDDATKTFTVIAKDSHADRVRELAQRLRQRNRVERHEITEVTE', mutations: 'T55I, P75N, V80H' },
+      { llr: -1.3269, sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDDATKTGTVIAKDSHADRVRELAQRLRQRNRVERVEITEVTE', mutations: 'F52G, T55I, P75N' },
+      { llr: -1.4318, sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDDATKTGTVTAKDSHADRVRELAQRLRQRPRVERVEITEVTE', mutations: 'F52G' },
+      { llr: -1.4346, sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDDATKTGTVIAKDSHADRVRELAQRLRQCNRVERHEITEVTE', mutations: 'F52G, T55I, R74C, P75N, V80H' },
+      { llr: -1.6199, sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDDATKTFTVTAKDSHADRVRELAQRLWQRPRVERHEITEVTE', mutations: 'R72W, V80H' },
+      { llr: -1.8311, sequence: 'TTYIHILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDDATKTFTVDAKDSHADRVRELAQRLRQRPRVERVEITEVTE', mutations: 'K4I, Y5H, T55D' },
+      { llr: -1.8681, sequence: 'TTYKYILNLKFAFGDTNSEAVDAAEAEKKFKQYANDHGVDGEWTYDDATKTFTVTAKDSHADRVRELAQRLRQRPRVERVEITEVKE', mutations: 'T86K' },
+      { llr: -1.8704, sequence: 'TTYKYILNYKFAFGDTNSEAVDAAEAENKFKQYANDHGVDGEWTYDDATKTFTVTAKDSHADRVRELAQRLRQRPRVERVEITEVTE', mutations: 'L9Y, K28N' },
+    ],
+  };
+  window.addEventListener('DOMContentLoaded', () => {
+    try { renderResults(DEMO_RESULT); } catch (e) { console.warn('demo render skipped', e); }
+  });
 
   // ── Helpers ──────────────────────────────────────────────────
   function setRunning(on) {
