@@ -425,6 +425,38 @@
       will-change:opacity,transform; }
     .reveal.in{ opacity:1; transform:none; }
     @media (prefers-reduced-motion: reduce){ .reveal{ opacity:1 !important; transform:none !important; transition:none; } }
+
+    /* Gently drifting background glow (same muted greens, just alive) */
+    body::before{
+      content:''; position:fixed; inset:-20%; z-index:-1; pointer-events:none;
+      background:
+        radial-gradient(600px 600px at 25% 30%, rgba(5,150,105,.06), transparent 60%),
+        radial-gradient(560px 560px at 80% 70%, rgba(20,184,120,.05), transparent 60%);
+      animation:bgFloat 24s ease-in-out infinite alternate;
+    }
+    @keyframes bgFloat{ from{ transform:translate3d(-2%,-1%,0) scale(1); } to{ transform:translate3d(3%,2%,0) scale(1.08); } }
+
+    /* Cursor-follow spotlight on cards (muted, subtle) */
+    .card{ position:relative; }
+    .card::after{
+      content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+      background:radial-gradient(260px circle at var(--mx,50%) var(--my,50%), rgba(5,150,105,.08), transparent 62%);
+      opacity:0; transition:opacity .35s ease; z-index:1;
+    }
+    .card:hover::after{ opacity:1; }
+
+    /* Physical 3D buttons: solid bottom edge that compresses on press */
+    .btn-run{
+      box-shadow:0 5px 0 #035c43, 0 14px 26px -10px rgba(5,150,105,.5);
+      transition:transform .12s cubic-bezier(.4,0,.2,1), box-shadow .18s ease, background .18s ease;
+    }
+    .btn-run:hover{ transform:translateY(-2px); box-shadow:0 7px 0 #035c43, 0 20px 34px -10px rgba(5,150,105,.55); }
+    .btn-run:active{ transform:translateY(3px); box-shadow:0 2px 0 #035c43, 0 8px 14px -8px rgba(5,150,105,.4); }
+    .btn-run:disabled{ box-shadow:0 4px 0 #cdeada; transform:none; }
+
+    /* Small interactive lifts (cursor reacting) */
+    .stat-card, .acc-btn, .tab, .viewer-reset{ transition:transform .15s ease, box-shadow .2s ease, color .15s ease; }
+    .stat-card:hover{ transform:translateY(-3px); }
   </style>
 </head>
 <body>
@@ -1341,6 +1373,28 @@
   // Scroll-reveal: fade/slide sections in as they enter the viewport.
   // Applied via JS so the page still works if JS is disabled.
   window.addEventListener('DOMContentLoaded', () => {
+    // Cursor-follow spotlight on cards (sets --mx/--my; no transforms, safe for 3D viewer)
+    document.querySelectorAll('.card').forEach(card => {
+      card.addEventListener('pointermove', e => {
+        const r = card.getBoundingClientRect();
+        card.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100) + '%');
+        card.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100) + '%');
+      });
+    });
+
+    // Subtle magnetic pull on the Run button (cursor reacting)
+    const runBtn = document.getElementById('runBtn');
+    if (runBtn) {
+      runBtn.addEventListener('pointermove', e => {
+        if (runBtn.disabled) return;
+        const r = runBtn.getBoundingClientRect();
+        const dx = (e.clientX - (r.left + r.width / 2)) / r.width;
+        const dy = (e.clientY - (r.top + r.height / 2)) / r.height;
+        runBtn.style.transform = `translate(${dx * 6}px, ${dy * 4 - 2}px)`;
+      });
+      runBtn.addEventListener('pointerleave', () => { runBtn.style.transform = ''; });
+    }
+
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const targets = [...document.querySelectorAll('.card')]
       .filter(el => !el.closest('#results, #activity, #gaHeader'));
