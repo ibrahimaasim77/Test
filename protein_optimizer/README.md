@@ -10,6 +10,7 @@ Combines a **Genetic Algorithm (GA)** with **BioEmu** structural-ensemble infere
 
 ## Table of Contents
 
+- [Quick Start: GPU VM (Directed Evolution)](#quick-start-gpu-vm-directed-evolution)
 - [Problem Statement](#problem-statement)
 - [System Architecture](#system-architecture)
 - [Component Breakdown](#component-breakdown)
@@ -21,6 +22,139 @@ Combines a **Genetic Algorithm (GA)** with **BioEmu** structural-ensemble infere
 - [Extension Points](#extension-points)
 - [Testing](#testing)
 - [Design Principles](#design-principles)
+
+---
+
+## Quick Start: GPU VM (Directed Evolution)
+
+This is the end-to-end workflow for running the real BioEmu pipeline on a GPU
+rental VM (Lambda / RunPod / Vast). It evolves a **defective** protein sequence
+so its BioEmu parameter (LLR) approaches a **goal** — either a number you choose
+or the LLR of a **healthy** protein.
+
+### 1. Set up the VM (one time)
+
+```bash
+# On the VM, in a fresh terminal:
+git clone https://github.com/ibrahimaasim77/Test.git
+cd Test/protein_optimizer
+bash setup_vm.sh
+```
+
+`setup_vm.sh` checks the GPU, creates a `.venv`, installs BioEmu + dependencies
+(`pip install "bioemu[cuda]"`), and runs a mock smoke test. No conda and **no
+HuggingFace token** are needed — model weights are public and download once.
+The "set a HF_TOKEN" warning is already suppressed.
+
+### 2. Activate the environment (every new terminal)
+
+```bash
+source .venv/bin/activate
+```
+
+### 3. Run it
+
+**Fit-to-target toward a healthy protein** (recommended — the directed-evolution story):
+
+```bash
+python main.py --config config/evolutionary.yaml \
+    --sequence   DEFECTIVE_SEQUENCE \
+    --healthy-sequence HEALTHY_SEQUENCE \
+    --set bioemu.num_samples=100 \
+    --set ga.population_size=20 \
+    --set ga.max_generations=3
+```
+
+**Fit-to-target toward a chosen LLR value:**
+
+```bash
+python main.py --config config/evolutionary.yaml \
+    --sequence DEFECTIVE_SEQUENCE \
+    --target -1.5 \
+    --set bioemu.num_samples=100
+```
+
+**Maximise mode** (no goal — just find the highest LLR): omit `--target` and
+`--healthy-sequence`.
+
+### 4. Practice sequences
+
+A ready-made recovery demo (the healthy protein with 5 point mutations):
+
+```bash
+# DEFECTIVE (goes after --sequence):
+MKTLLGLAVLCLGFAQASGNPERPIDGFHGDLQSLDKAMFESRHITAYIEWLEELRQRQTAATGGKRQ
+
+# HEALTHY (goes after --healthy-sequence):
+MKTLLILAVLCLGFAQASGNIERPIDGFHGDLQSLIKAMFESRHITAYIEQLEELRQRQTAATGGMRQ
+```
+
+Or run the bundled script: `bash practice.sh` (real BioEmu) or
+`bash practice.sh mock` (synthetic, no GPU, for rehearsing).
+
+### 5. How long it takes
+
+Total time ≈ **(number of sequences) × (time for one BioEmu run)**.
+Sequences scored = `2 (reference + goal) + population_size × max_generations`.
+`num_samples` is the heavy knob. **Time the first sequence and multiply.**
+For a ~5-minute smoke test:
+
+```bash
+python main.py --config config/evolutionary.yaml \
+    --sequence MKTLLGLAVLCLGFAQASGNPERPIDGFHGDLQSLDKAMFESRHITAYIEWLEELRQRQTAATGGKRQ \
+    --healthy-sequence MKTLLILAVLCLGFAQASGNIERPIDGFHGDLQSLIKAMFESRHITAYIEQLEELRQRQTAATGGMRQ \
+    --set bioemu.num_samples=5 --set ga.population_size=4 --set ga.max_generations=1
+```
+
+### 6. Output — what you get and where
+
+**Printed to screen** (save it with `... 2>&1 | tee my_results.txt`):
+
+```
+Defective sequence parameter :  -3.9915   (start)
+Target (goal) parameter      :  -2.0000   (what we optimise toward)
+Best engineered parameter    :  -2.3803   [closer to goal]
+Distance to goal: 1.9915  →  0.3803   (closed +1.6111)
+Best sequence: ...
+```
+
+**Trajectory files** (BioEmu's real `.xtc` + `.pdb`, saved automatically) under
+`results/trajectories/` — full path on the VM
+`/workspace/Test/protein_optimizer/results/trajectories/`:
+
+```
+results/trajectories/reference/samples.xtc    + topology.pdb
+results/trajectories/best_mutant/samples.xtc  + topology.pdb
+```
+
+List them: `ls -R results/trajectories/`
+
+### 7. Download files to your laptop
+
+- **RunPod / Vast:** use the dashboard's web file browser → navigate to
+  `/workspace/Test/protein_optimizer/results/`.
+- **SCP** (run from your laptop, not the VM):
+  ```bash
+  scp -P <port> root@<vm-ip>:/workspace/Test/protein_optimizer/results/trajectories/best_mutant/samples.xtc .
+  ```
+  The provider's "Connect" page gives `<vm-ip>` and `<port>`.
+
+### Useful flags
+
+| Flag | Meaning |
+|---|---|
+| `--sequence SEQ` | The defective / starting sequence (single-letter AA codes) |
+| `--healthy-sequence SEQ` | Healthy protein; its LLR becomes the goal |
+| `--target LLR` | Goal LLR as a number (used if no `--healthy-sequence`) |
+| `--set bioemu.num_samples=N` | Conformations sampled per sequence (heavy) |
+| `--set ga.population_size=N` | Candidates generated per round |
+| `--set ga.max_generations=N` | Number of rounds |
+| `--mock` | Synthetic BioEmu (no GPU) for testing |
+| `--random-mutations` | Skip ESM-2; use random mutations |
+| `--verbose` | Print the per-round scoring tables |
+
+After the first run caches the weights, you can go fully offline:
+`export HF_HUB_OFFLINE=1`.
 
 ---
 
@@ -408,8 +542,14 @@ This installs: `numpy`, `pyyaml`, `torch`, `transformers` (for ESM-2), `pytest`.
 
 **BioEmu** must be installed separately — it requires CUDA and large model weights:
 ```bash
-# Follow the official BioEmu installation guide:
-# https://github.com/microsoft/bioemu
+pip install "bioemu[cuda]"
+# Reference: https://github.com/microsoft/bioemu
+```
+
+**On a GPU VM, just run the setup script** — it does all of the above plus a
+smoke test (see [Quick Start](#quick-start-gpu-vm-directed-evolution)):
+```bash
+bash setup_vm.sh
 ```
 
 **No GPU / testing without models:**
@@ -460,7 +600,21 @@ logging:
 
 ### CLI
 
+> For the main directed-evolution workflow (BioEmu LLR, fit-to-target, output
+> files), see [Quick Start: GPU VM](#quick-start-gpu-vm-directed-evolution).
+> The examples below cover the GA pipeline and no-GPU testing.
+
 ```bash
+# Directed evolution toward a healthy protein (real BioEmu)
+python main.py --config config/evolutionary.yaml \
+    --sequence DEFECTIVE_SEQUENCE \
+    --healthy-sequence HEALTHY_SEQUENCE \
+    --set bioemu.num_samples=100
+
+# Directed evolution toward a target LLR value
+python main.py --config config/evolutionary.yaml \
+    --sequence DEFECTIVE_SEQUENCE --target -1.5
+
 # No GPU (mock BioEmu + random mutations)
 python main.py --config config/default.yaml --mock --random-mutations
 
