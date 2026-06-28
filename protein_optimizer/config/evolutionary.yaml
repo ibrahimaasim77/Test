@@ -6,6 +6,15 @@ original_sequence: "MKTLLILAVLCLGFAQASGNIERPIDGFHGDLQSLIKAMFESRHITAYIEQLEELRQRQT
 # No wildtype target — fitness is determined purely by BioEmu LLR
 wildtype_sequence: ""
 
+# In silico directed evolution goal (optional). Optimise original_sequence so
+# its BioEmu LLR approaches this goal instead of just maximising it.
+#   target_parameter: -1.5        # a user-defined goal LLR
+#   healthy_sequence: "MKT..."    # a healthy protein; its LLR becomes the goal
+# Leave both unset (null / "") to maximise LLR. Can also pass --target /
+# --healthy-sequence on the command line.
+target_parameter: null
+healthy_sequence: ""
+
 esm2:
   model_name: "facebook/esm2_t33_650M_UR50D"
   device: "cuda"

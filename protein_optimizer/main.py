@@ -59,6 +59,18 @@ def parse_args() -> argparse.Namespace:
         help="Protein sequence to optimise (single-letter AA codes). Overrides config.",
     )
     parser.add_argument(
+        "--target",
+        type=float,
+        default=None,
+        metavar="LLR",
+        help="Optimise toward this goal LLR (fit-to-target mode) instead of maximising",
+    )
+    parser.add_argument(
+        "--healthy-sequence",
+        default=None,
+        help="A healthy protein sequence; its BioEmu LLR becomes the goal to optimise toward",
+    )
+    parser.add_argument(
         "--mock",
         action="store_true",
         help="Use synthetic BioEmu outputs — no GPU required (for testing)",
@@ -118,6 +130,10 @@ def main() -> None:
 
     if args.sequence:
         cfg.original_sequence = args.sequence.upper().strip()
+    if args.target is not None:
+        cfg.target_parameter = args.target
+    if args.healthy_sequence:
+        cfg.healthy_sequence = args.healthy_sequence.upper().strip()
     if args.mock:
         cfg.bioemu.mock = True
     if args.random_mutations:
@@ -138,6 +154,12 @@ def main() -> None:
     print(f"  Strategy  : {'ESM-2 guided' if cfg.mutation.strategy == 'esm_guided' else 'random'} mutations")
     print(f"  Rounds    : {cfg.ga.max_generations}  ×  {cfg.ga.population_size} candidates  "
           f"= {cfg.ga.max_generations * cfg.ga.population_size} total")
+    if cfg.healthy_sequence:
+        print(f"  Goal      : match healthy protein's LLR (fit-to-target)")
+    elif cfg.target_parameter is not None:
+        print(f"  Goal      : reach target LLR = {cfg.target_parameter} (fit-to-target)")
+    else:
+        print(f"  Goal      : maximise LLR (no target set)")
     print(f"  BioEmu    : {'MOCK (synthetic)' if cfg.bioemu.mock else 'REAL'}\n")
 
     search = BudgetedEvolutionarySearch(cfg, verbose=args.verbose)
@@ -165,16 +187,27 @@ def main() -> None:
     print("  RESULTS")
     print("=" * 65)
 
-    print(f"\n  When we ran the original sequence through BioEmu,")
-    print(f"  it received an LLR of  {result.reference_llr:.4f}")
-    print()
-    print(f"  The best mutant sequence our search found")
-    print(f"  achieved an LLR of     {result.best_llr:.4f}"
-          + ("  [improved]" if result.improved else "  [no improvement]"))
-
-    change = result.best_llr - result.reference_llr
-    print()
-    print(f"  LLR change             {change:+.4f}   (higher = more favourable)")
+    if result.target_parameter is not None:
+        # Fit-to-target mode (in silico directed evolution toward a goal)
+        start_dist = abs(result.reference_llr - result.target_parameter)
+        best_dist = abs(result.best_llr - result.target_parameter)
+        print(f"\n  Defective sequence parameter : {result.reference_llr:8.4f}   (start)")
+        print(f"  Target (goal) parameter      : {result.target_parameter:8.4f}   (what we optimise toward)")
+        print(f"  Best engineered parameter    : {result.best_llr:8.4f}"
+              + ("   [closer to goal]" if result.improved else "   [no improvement]"))
+        print()
+        print(f"  Distance to goal: {start_dist:.4f}  →  {best_dist:.4f}   "
+              f"(closed {start_dist - best_dist:+.4f})")
+    else:
+        # Maximise mode (no target set)
+        print(f"\n  When we ran the original sequence through BioEmu,")
+        print(f"  it received an LLR of  {result.reference_llr:.4f}")
+        print()
+        print(f"  The best mutant sequence our search found")
+        print(f"  achieved an LLR of     {result.best_llr:.4f}"
+              + ("  [improved]" if result.improved else "  [no improvement]"))
+        print()
+        print(f"  LLR change             {result.best_llr - result.reference_llr:+.4f}   (higher = more favourable)")
 
     print(f"\n  Best sequence:")
     print(f"    {result.best_sequence}")

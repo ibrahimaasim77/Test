@@ -50,26 +50,40 @@ logger = logging.getLogger(__name__)
 class EvolutionarySearchResult:
     """Final result returned by BudgetedEvolutionarySearch.run()."""
 
-    reference_llr: float                    # BioEmu LLR of the original sequence
-    best_sequence: str                       # highest-scoring mutant found
+    reference_llr: float                    # BioEmu LLR of the original (defective) sequence
+    best_sequence: str                       # best mutant found
     best_llr: float                          # its BioEmu LLR
     rounds_run: int                          # how many crossover rounds were completed
     total_evaluated: int                     # total unique sequences scored
     all_scores: Dict[str, float]             # {sequence: llr} for every scored mutant
     top20_per_round: List[List[str]]         # the elite-20 snapshot after each round
     total_wall_time_s: float
+    # Goal LLR when running in fit-to-target mode; None = maximise mode
+    target_parameter: Optional[float] = None
     # BioEmuOutput objects kept for trajectory file export after the search
     reference_output: Optional[BioEmuOutput] = None
     best_output: Optional[BioEmuOutput] = None
 
+    def _fitness(self, llr: float) -> float:
+        """Higher = better in both modes. Maximise mode: the LLR itself.
+        Target mode: negative distance to the goal (closest = highest)."""
+        if self.target_parameter is None:
+            return llr
+        return -abs(llr - self.target_parameter)
+
     @property
     def improved(self) -> bool:
-        """True if any mutant scored better (higher LLR) than the reference."""
-        return self.best_llr > self.reference_llr
+        """Maximise mode: best LLR beats the reference.
+        Target mode: best LLR is closer to the goal than the reference is."""
+        return self._fitness(self.best_llr) > self._fitness(self.reference_llr)
 
     def ranked(self, n: int = 20) -> List[Tuple[str, float]]:
-        """Return the top-n (sequence, llr) pairs, best first."""
-        return sorted(self.all_scores.items(), key=lambda x: x[1], reverse=True)[:n]
+        """Return the top-n (sequence, llr) pairs, best first (by fitness)."""
+        return sorted(
+            self.all_scores.items(),
+            key=lambda x: self._fitness(x[1]),
+            reverse=True,
+        )[:n]
 
 
 # ---------------------------------------------------------------------------
@@ -119,28 +133,53 @@ class BudgetedEvolutionarySearch:
     # Public API
     # ------------------------------------------------------------------
 
+    def _fitness(self, llr: float) -> float:
+        """Higher = better in both modes. Maximise mode: the LLR itself.
+        Target mode: negative distance to the goal (closest to goal = highest)."""
+        if self._target is None:
+            return llr
+        return -abs(llr - self._target)
+
     def run(self) -> EvolutionarySearchResult:
         """Execute the full search. Returns EvolutionarySearchResult."""
         start = time.time()
         original = self.config.original_sequence
 
-        # Score the reference sequence first
+        # Score the reference (defective) sequence first
         logger.info("Scoring reference sequence (len=%d) ...", len(original))
         ref_output = self._bioemu.infer_batch([original])[0]
         reference_llr = self._extract_llr(ref_output)
         logger.info("Reference LLR = %.4f", reference_llr)
 
+        # Determine the optimisation target (goal LLR), if any.
+        #   healthy_sequence (scored once)  >  target_parameter  >  None (maximise)
+        self._target: Optional[float] = None
+        if self.config.healthy_sequence:
+            logger.info("Scoring healthy reference sequence for target parameter ...")
+            healthy_output = self._bioemu.infer_batch([self.config.healthy_sequence])[0]
+            self._target = self._extract_llr(healthy_output)
+            logger.info("Target parameter (from healthy protein) = %.4f", self._target)
+        elif self.config.target_parameter is not None:
+            self._target = float(self.config.target_parameter)
+            logger.info("Target parameter (user-defined) = %.4f", self._target)
+        else:
+            logger.info("No target set — maximising LLR.")
+
         if self._verbose:
             self._print_header("REFERENCE SEQUENCE")
             print(f"  Sequence : {original}", flush=True)
             print(f"  Length   : {len(original)} residues", flush=True)
-            print(f"  LLR      : {reference_llr:.4f}  (this is the target to beat)", flush=True)
+            print(f"  LLR      : {reference_llr:.4f}", flush=True)
+            if self._target is not None:
+                print(f"  Target   : {self._target:.4f}  (optimising toward this)", flush=True)
+            else:
+                print(f"  Goal     : maximise LLR (no target set)", flush=True)
 
         all_scores: Dict[str, float] = {}
         top20_per_round: List[List[str]] = []
         current_parents: List[str] = [original]
         best_output: Optional[BioEmuOutput] = None
-        best_llr_tracked: float = float("-inf")
+        best_fitness_tracked: float = float("-inf")
 
         for round_idx in range(self._max_rounds):
             remaining = self._batch_size
@@ -187,26 +226,27 @@ class BudgetedEvolutionarySearch:
                 llr = self._extract_llr(out)
                 all_scores[seq] = llr
                 round_scores[seq] = llr
-                if llr > best_llr_tracked:
-                    best_llr_tracked = llr
+                if self._fitness(llr) > best_fitness_tracked:
+                    best_fitness_tracked = self._fitness(llr)
                     best_output = out
 
             # Show every candidate scored this round
             if self._verbose:
-                round_ranked = sorted(round_scores.items(), key=lambda x: x[1], reverse=True)
+                col2 = "dist→goal" if self._target is not None else "δ vs ref"
+                round_ranked = sorted(round_scores.items(), key=lambda x: self._fitness(x[1]), reverse=True)
                 print(f"\n  All {len(round_ranked)} candidates scored this round:", flush=True)
-                print(f"  {'Rank':>4}  {'LLR':>8}  {'δ vs ref':>9}  Sequence", flush=True)
+                print(f"  {'Rank':>4}  {'LLR':>8}  {col2:>9}  Sequence", flush=True)
                 print(f"  {'-'*4}  {'-'*8}  {'-'*9}  {'-'*40}", flush=True)
                 for rank, (seq, llr) in enumerate(round_ranked, 1):
-                    delta = llr - reference_llr
+                    secondary = abs(llr - self._target) if self._target is not None else (llr - reference_llr)
                     marker = " ◄ best" if rank == 1 else ""
                     print(
-                        f"  {rank:>4}  {llr:>8.4f}  {delta:>+9.4f}  {seq[:50]}{marker}",
+                        f"  {rank:>4}  {llr:>8.4f}  {secondary:>+9.4f}  {seq[:50]}{marker}",
                         flush=True,
                     )
 
-            # Select global top-20
-            sorted_all = sorted(all_scores.items(), key=lambda x: x[1], reverse=True)
+            # Select global top-20 (closest to target, or highest LLR if maximising)
+            sorted_all = sorted(all_scores.items(), key=lambda x: self._fitness(x[1]), reverse=True)
             top20 = [seq for seq, _ in sorted_all[: self._n_elite]]
             top20_per_round.append(top20)
 
@@ -217,14 +257,15 @@ class BudgetedEvolutionarySearch:
             )
 
             if self._verbose:
+                col2 = "dist→goal" if self._target is not None else "δ vs ref"
                 print(f"\n  Top {self._n_elite} selected (global best so far — seed next round):", flush=True)
-                print(f"  {'Rank':>4}  {'LLR':>8}  {'δ vs ref':>9}  Sequence", flush=True)
+                print(f"  {'Rank':>4}  {'LLR':>8}  {col2:>9}  Sequence", flush=True)
                 print(f"  {'-'*4}  {'-'*8}  {'-'*9}  {'-'*40}", flush=True)
                 for rank, seq in enumerate(top20, 1):
                     llr = all_scores[seq]
-                    delta = llr - reference_llr
+                    secondary = abs(llr - self._target) if self._target is not None else (llr - reference_llr)
                     print(
-                        f"  {rank:>4}  {llr:>8.4f}  {delta:>+9.4f}  {seq[:50]}",
+                        f"  {rank:>4}  {llr:>8.4f}  {secondary:>+9.4f}  {seq[:50]}",
                         flush=True,
                     )
                 print(flush=True)
@@ -232,13 +273,15 @@ class BudgetedEvolutionarySearch:
             current_parents = top20
 
         elapsed = time.time() - start
-        best_seq, best_llr = max(all_scores.items(), key=lambda x: x[1])
+        best_seq, best_llr = max(all_scores.items(), key=lambda x: self._fitness(x[1]))
+        improved = self._fitness(best_llr) > self._fitness(reference_llr)
 
         logger.info(
-            "Search complete | rounds=%d | total_evaluated=%d | "
+            "Search complete | rounds=%d | total_evaluated=%d | target=%s | "
             "best_llr=%.4f | reference_llr=%.4f | improved=%s | wall_time=%.1fs",
-            len(top20_per_round), len(all_scores), best_llr,
-            reference_llr, best_llr > reference_llr, elapsed,
+            len(top20_per_round), len(all_scores),
+            f"{self._target:.4f}" if self._target is not None else "none",
+            best_llr, reference_llr, improved, elapsed,
         )
 
         return EvolutionarySearchResult(
@@ -250,6 +293,7 @@ class BudgetedEvolutionarySearch:
             all_scores=all_scores,
             top20_per_round=top20_per_round,
             total_wall_time_s=elapsed,
+            target_parameter=self._target,
             reference_output=ref_output,
             best_output=best_output,
         )
