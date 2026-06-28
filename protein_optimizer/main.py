@@ -164,6 +164,10 @@ def main() -> None:
     print(f"  achieved an LLR of     {result.best_llr:.4f}"
           + ("  [improved]" if result.improved else "  [no improvement]"))
 
+    change = result.best_llr - result.reference_llr
+    print()
+    print(f"  LLR change             {change:+.4f}   (higher = more favourable)")
+
     print(f"\n  Best sequence:")
     print(f"    {result.best_sequence}")
 

@@ -95,6 +95,11 @@ class BioEmuOutput:
     # Present only when the NPZ output contains a 'log_weights' array.
     log_partition: Optional[float] = None
 
+    # Raw bytes of BioEmu's own trajectory output (samples.xtc / topology.pdb),
+    # captured before the temp working dir is deleted. None for the mock backend.
+    xtc_bytes: Optional[bytes] = None
+    pdb_bytes: Optional[bytes] = None
+
     @property
     def ensemble_size(self) -> int:
         return len(self.samples)
@@ -213,7 +218,7 @@ class BioEmuWrapper(BaseStructuralBackend):
         except ImportError as exc:
             raise ImportError(
                 "BioEmu is not installed. "
-                "Run: pip install git+https://github.com/microsoft/bioemu.git"
+                'Run: pip install "bioemu[cuda]"   (see setup_vm.sh)'
             ) from exc
 
         # model_path doubles as model_name if it's a version string
@@ -243,6 +248,15 @@ class BioEmuWrapper(BaseStructuralBackend):
 
     def _parse_output_dir(self, sequence: str, output_dir: Path) -> BioEmuOutput:
         output = BioEmuOutput(sequence=sequence)
+
+        # Capture BioEmu's own trajectory files (samples.xtc + topology.pdb) now,
+        # while the temp dir still exists — they are deleted when it closes.
+        xtc_path = output_dir / "samples.xtc"
+        pdb_path = output_dir / "topology.pdb"
+        if xtc_path.exists():
+            output.xtc_bytes = xtc_path.read_bytes()
+        if pdb_path.exists():
+            output.pdb_bytes = pdb_path.read_bytes()
 
         # BioEmu writes: batch_0000000_0000010.npz, batch_0000010_0000020.npz ...
         npz_files = sorted(output_dir.glob("batch_*.npz"))
@@ -405,27 +419,40 @@ _AA3: Dict[str, str] = {
 
 def write_trajectory_files(output: "BioEmuOutput", out_dir: Path) -> Dict[str, Path]:
     """
-    Write structure and trajectory files for one BioEmuOutput.
+    Write trajectory files for one BioEmuOutput.
 
-    Always writes:
-      structure.pdb  — Cα-only PDB of the highest-weight sample
+    Real BioEmu runs: writes BioEmu's own files unchanged —
+      samples.xtc   (full conformational ensemble trajectory)
+      topology.pdb  (reference topology for the .xtc)
 
-    Writes if MDTraj is installed:
-      trajectory.xtc — all ensemble samples as an XTC trajectory
+    Mock / no-file fallback: writes a Cα-only structure.pdb from coordinates so
+    something is still produced for testing.
 
-    Returns a dict mapping file type ('pdb', 'xtc') → Path.
+    Returns a dict mapping file type ('xtc', 'pdb') → Path.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    samples_with_coords = [s for s in output.samples if s.ca_coords is not None]
-    if not samples_with_coords:
-        logger.warning("No Cα coordinates available — skipping trajectory export for %s...", output.sequence[:10])
-        return {}
-
     saved: Dict[str, Path] = {}
 
-    # Best sample = highest log_weight; fallback to first sample
+    # Preferred path: BioEmu's real output files captured during inference
+    if output.xtc_bytes is not None:
+        xtc_path = out_dir / "samples.xtc"
+        xtc_path.write_bytes(output.xtc_bytes)
+        saved["xtc"] = xtc_path
+    if output.pdb_bytes is not None:
+        pdb_path = out_dir / "topology.pdb"
+        pdb_path.write_bytes(output.pdb_bytes)
+        saved["pdb"] = pdb_path
+
+    if saved:
+        return saved
+
+    # Fallback (e.g. mock backend): write a Cα-only PDB from coordinates
+    samples_with_coords = [s for s in output.samples if s.ca_coords is not None]
+    if not samples_with_coords:
+        logger.info("No BioEmu trajectory files or coordinates available for %s... — nothing to export", output.sequence[:10])
+        return {}
+
     best = max(
         samples_with_coords,
         key=lambda s: s.log_weight if s.log_weight is not None else 0.0,
@@ -433,11 +460,6 @@ def write_trajectory_files(output: "BioEmuOutput", out_dir: Path) -> Dict[str, P
     pdb_path = out_dir / "structure.pdb"
     _write_pdb(best.ca_coords, pdb_path, output.sequence)
     saved["pdb"] = pdb_path
-
-    xtc_path = _write_xtc(samples_with_coords, out_dir / "trajectory.xtc")
-    if xtc_path:
-        saved["xtc"] = xtc_path
-
     return saved
 
 
@@ -451,32 +473,6 @@ def _write_pdb(ca_coords: np.ndarray, path: Path, sequence: str = "") -> None:
                 f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00           C  \n"
             )
         fh.write("END\n")
-
-
-def _write_xtc(samples: List["ConformationSample"], path: Path) -> Optional[Path]:
-    """Write all samples as a multi-frame XTC trajectory using MDTraj."""
-    try:
-        import mdtraj as md
-
-        L = len(samples[0].ca_coords)
-        # MDTraj expects coordinates in nm; BioEmu outputs Å
-        coords_nm = np.array([s.ca_coords for s in samples]) / 10.0  # (N, L, 3)
-
-        top = md.Topology()
-        chain = top.add_chain()
-        for _ in range(L):
-            res = top.add_residue("ALA", chain)
-            top.add_atom("CA", md.element.carbon, res)
-
-        traj = md.Trajectory(coords_nm, top)
-        traj.save_xtc(str(path))
-        return path
-    except ImportError:
-        logger.info("MDTraj not installed — XTC export skipped (pip install mdtraj to enable)")
-        return None
-    except Exception as exc:
-        logger.warning("XTC export failed: %s", exc)
-        return None
 
 
 # ---------------------------------------------------------------------------
