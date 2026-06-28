@@ -456,7 +456,55 @@
 
     /* Small interactive lifts (cursor reacting) */
     .stat-card, .acc-btn, .tab, .viewer-reset{ transition:transform .15s ease, box-shadow .2s ease, color .15s ease; }
-    .stat-card:hover{ transform:translateY(-3px); }
+  </style>
+
+  <!-- ── Futuristic theme: airy light, frosted glass, 3D motion ──── -->
+  <style>
+    :root{
+      --bg:#f5f8f6; --surface:#ffffff; --border:#e7ede9;
+      --muted:#5d6b63; --subtle:#9aa8a0;
+    }
+    body{
+      background:linear-gradient(180deg,#fbfdfc 0%, #edf3ef 100%);
+      background-attachment:fixed; color:#10221a;
+    }
+    /* Subtle tech grid + soft glow, faded at the edges (overrides earlier ::before) */
+    body::before{
+      content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+      background:
+        radial-gradient(900px 620px at 50% -12%, rgba(5,150,105,.07), transparent 60%),
+        linear-gradient(rgba(5,150,105,.03) 1px, transparent 1px) 0 0 / 100% 66px,
+        linear-gradient(90deg, rgba(5,150,105,.03) 1px, transparent 1px) 0 0 / 66px 100%;
+      -webkit-mask-image:radial-gradient(circle at 50% 18%, #000 0%, transparent 78%);
+      mask-image:radial-gradient(circle at 50% 18%, #000 0%, transparent 78%);
+      animation:bgFloat 28s ease-in-out infinite alternate;
+    }
+
+    /* Floating frosted-glass cards */
+    .card{
+      background:rgba(255,255,255,.72);
+      -webkit-backdrop-filter:blur(16px) saturate(1.15);
+      backdrop-filter:blur(16px) saturate(1.15);
+      border:1px solid rgba(255,255,255,.65);
+      border-radius:20px;
+      box-shadow:0 1px 2px rgba(16,40,24,.04), 0 14px 44px -20px rgba(16,40,24,.20);
+    }
+    .card:hover{ box-shadow:0 2px 8px rgba(16,40,24,.06), 0 26px 60px -22px rgba(16,40,24,.26); transform:translateY(-3px); }
+
+    /* Cleaner hero */
+    h1{ font-size:clamp(2.1rem,5vw,3.15rem); letter-spacing:-.045em; }
+    .tagline{ color:var(--muted); }
+
+    /* 3D scroll-reveal: sections tilt up into place */
+    .reveal{
+      opacity:0; transform:perspective(1000px) rotateX(8deg) translateY(34px) scale(.985);
+      transition:opacity .8s cubic-bezier(.16,1,.3,1), transform .8s cubic-bezier(.16,1,.3,1);
+    }
+    .reveal.in{ opacity:1; transform:perspective(1000px) rotateX(0) translateY(0) scale(1); }
+
+    /* 3D tilt for the result stat cards */
+    .stats-grid{ perspective:900px; }
+    .stat-card{ transform-style:preserve-3d; will-change:transform; }
   </style>
 </head>
 <body>
@@ -1380,6 +1428,17 @@
         card.style.setProperty('--mx', ((e.clientX - r.left) / r.width * 100) + '%');
         card.style.setProperty('--my', ((e.clientY - r.top) / r.height * 100) + '%');
       });
+    });
+
+    // 3D tilt on result stat cards (cursor reacting)
+    document.querySelectorAll('.stat-card').forEach(card => {
+      card.addEventListener('pointermove', e => {
+        const r = card.getBoundingClientRect();
+        const px = (e.clientX - r.left) / r.width - 0.5;
+        const py = (e.clientY - r.top) / r.height - 0.5;
+        card.style.transform = `rotateY(${px * 9}deg) rotateX(${-py * 9}deg) translateY(-3px)`;
+      });
+      card.addEventListener('pointerleave', () => { card.style.transform = ''; });
     });
 
     // Subtle magnetic pull on the Run button (cursor reacting)
