@@ -2,7 +2,7 @@
 
 An industrial-grade evolutionary optimization framework for protein sequence design.
 
-Combines an **evolutionary search** with **BioEmu** structural-ensemble inference and **Meta ESM-2** guided mutations to evolve protein sequences toward a target. Progress is measured by comparing each sequence's **BioEmu LLR** (a stability/plausibility parameter) against a reference and a goal — see [How We Measure Progress](#how-we-measure-progress-llr-comparison).
+Combines a **Genetic Algorithm (GA)** with **BioEmu** structural-ensemble inference and **Meta ESM-2** guided mutations to evolve protein sequences toward a desired **conformational landscape**, not just a single static fold.
 
 > **For AI assistants reading this:** This is a pure inference + optimization system. We are NOT training any models. ESM-2 is used only to propose biologically plausible mutations. BioEmu is used only to evaluate structural quality. The GA drives the search. Every component is modular and swappable.
 
@@ -11,7 +11,6 @@ Combines an **evolutionary search** with **BioEmu** structural-ensemble inferenc
 ## Table of Contents
 
 - [Quick Start: GPU VM (Directed Evolution)](#quick-start-gpu-vm-directed-evolution)
-- [How We Measure Progress: LLR Comparison](#how-we-measure-progress-llr-comparison)
 - [Problem Statement](#problem-statement)
 - [System Architecture](#system-architecture)
 - [Component Breakdown](#component-breakdown)
@@ -38,7 +37,7 @@ or the LLR of a **healthy** protein.
 ```bash
 # On the VM, in a fresh terminal:
 git clone https://github.com/ibrahimaasim77/Test.git
-cd Test
+cd Test/protein_optimizer
 bash setup_vm.sh
 ```
 
@@ -121,7 +120,7 @@ Best sequence: ...
 
 **Trajectory files** (BioEmu's real `.xtc` + `.pdb`, saved automatically) under
 `results/trajectories/` — full path on the VM
-`/workspace/Test/results/trajectories/`:
+`/workspace/Test/protein_optimizer/results/trajectories/`:
 
 ```
 results/trajectories/reference/samples.xtc    + topology.pdb
@@ -133,10 +132,10 @@ List them: `ls -R results/trajectories/`
 ### 7. Download files to your laptop
 
 - **RunPod / Vast:** use the dashboard's web file browser → navigate to
-  `/workspace/Test/results/`.
+  `/workspace/Test/protein_optimizer/results/`.
 - **SCP** (run from your laptop, not the VM):
   ```bash
-  scp -P <port> root@<vm-ip>:/workspace/Test/results/trajectories/best_mutant/samples.xtc .
+  scp -P <port> root@<vm-ip>:/workspace/Test/protein_optimizer/results/trajectories/best_mutant/samples.xtc .
   ```
   The provider's "Connect" page gives `<vm-ip>` and `<port>`.
 
@@ -159,60 +158,46 @@ After the first run caches the weights, you can go fully offline:
 
 ---
 
-## How We Measure Progress: LLR Comparison
+## Wildtype Recovery Mode
 
-**This is the core of the project, and it replaces the old "warmer / colder"
-sequence-identity indicator.** We no longer score a mutant by how many residues
-it shares with a known wildtype. Instead we judge every sequence by a single
-physical number that BioEmu gives us: its **LLR (log-likelihood ratio)** — a
-stability/plausibility parameter derived from the structural ensemble (internally
-BioEmu's energy proxy, negated so that **higher = more favourable**).
+In addition to open-ended structural optimization, the system supports a **target-guided recovery experiment**:
 
-Why this is better:
+1. Provide a known **wildtype sequence** (the target)
+2. Provide a **degraded / mutated starting sequence** (the "bad" protein)
+3. The GA evolves the bad sequence back toward the wildtype, guided by both structural fitness **and** sequence identity
+4. Progress is visualised in **N equal stages** (default: fifths) with a warm/cold proximity indicator at each checkpoint
 
-- The wildtype warm/cold scale only worked if you already knew the "right"
-  answer. LLR needs no answer key — it scores any sequence on its own merits.
-- It's a continuous physical quantity, not a string-matching percentage, so the
-  search can find a *different* sequence that behaves like the goal.
-
-### The three numbers we compare
-
-| Number | What it is |
-|---|---|
-| **Reference LLR** | The LLR of the starting (defective) sequence — the baseline. |
-| **Goal LLR** | The LLR we aim for: either a value you pass with `--target`, or the LLR of a **healthy** protein you pass with `--healthy-sequence`. |
-| **Best engineered LLR** | The LLR of the best sequence the search found. |
-
-### Two ways to run
-
-**Fit-to-target (directed evolution).** Give the search a goal LLR. A mutant is
-"better" when its LLR is **closer to the goal** than the reference is. We report
-the *distance to the goal* shrinking:
+This is useful for validating that the system works — if you know the answer, you can watch the GA find it.
 
 ```
-Defective sequence parameter : -3.9915   (start — reference LLR)
-Target (goal) parameter      : -2.0000   (the goal LLR)
-Best engineered parameter    : -2.3803   [closer to goal]
-Distance to goal: 1.9915  →  0.3803   (closed +1.6111)
+  Stage 1/5  (gen 0–19)   ❄❄❄   COLD
+  Proximity to wildtype : [████████░░░░░░░░░░░░░░░░] 31.2%
+
+  Stage 2/5  (gen 20–39)  ❄❄    COOL
+  Proximity to wildtype : [████████████░░░░░░░░░░░░] 48.6%
+
+  Stage 3/5  (gen 40–59)  🔥    WARM
+  Proximity to wildtype : [████████████████░░░░░░░░] 65.3%
+
+  Stage 4/5  (gen 60–79)  🔥🔥   HOT
+  Proximity to wildtype : [████████████████████░░░░] 80.1%
+
+  Stage 5/5  (gen 80–99)  🔥🔥🔥  VERY HOT
+  Proximity to wildtype : [███████████████████████░] 92.7%
 ```
 
-**Maximise (no goal).** Omit `--target` and `--healthy-sequence`. A mutant is
-"better" when its LLR simply **beats the reference**:
+**Warmth scale:**
 
-```
-Reference LLR : -3.9915
-Best LLR      : -1.8402   [improved]
-LLR change    : +2.1513   (higher = more favourable)
-```
-
-Every round prints a table ranked by LLR, with a second column showing each
-candidate's distance-to-goal (fit-to-target) or change-vs-reference (maximise).
-Run with `--verbose` to see those tables live.
-
-> **Legacy note:** a sequence-identity `WildtypeProximityScorer` and the warm/cold
-> `StageReporter` still ship in `scoring.py` / `analysis.py` and are covered by
-> tests, but they belong to the older GA pipeline. The LLR comparison above is
-> the approach we present and run.
+| Identity | Label | Icons |
+|---|---|---|
+| 0–15% | FREEZING | ❄❄❄❄❄ |
+| 15–30% | ICY | ❄❄❄❄ |
+| 30–45% | COLD | ❄❄❄ |
+| 45–60% | COOL | ❄❄ |
+| 60–72% | WARM | 🔥 |
+| 72–84% | HOT | 🔥🔥 |
+| 84–93% | VERY HOT | 🔥🔥🔥 |
+| 93–100% | SCORCHING | 🔥🔥🔥🔥 |
 
 ---
 
@@ -403,25 +388,6 @@ scoring_fn.register("sasa", SASAScorer, weight=0.15, renormalize=True)
 
 ---
 
-### `evolutionary_search.py` — LLR-Driven Directed Evolution (primary run path)
-
-`BudgetedEvolutionarySearch` is what `main.py` actually runs. It works directly
-in **LLR space** instead of the composite GA fitness:
-
-1. Score the reference (defective) sequence with BioEmu → **reference LLR**.
-2. If `--healthy-sequence` / `--target` is set, score it once → **goal LLR**.
-3. Each round: propose `population_size` mutants (ESM-2 or random), score them
-   with BioEmu, rank by LLR, keep the best — in fit-to-target mode "best" means
-   closest to the goal LLR; in maximise mode it means highest LLR.
-4. Repeat for `max_generations` rounds, then report the comparison and save
-   trajectory files for the reference and the best mutant.
-
-This is the module that implements the [LLR comparison](#how-we-measure-progress-llr-comparison)
-described above. `scoring.py`, `genetic_algorithm.py`, and `pipeline.py` below
-are the older composite-fitness GA path, kept for reference and tests.
-
----
-
 ### `genetic_algorithm.py` — GA Engine
 
 A **biology-agnostic** evolutionary optimiser. It operates on:
@@ -463,7 +429,7 @@ sequences → BioEmu.infer_batch() → ScoringFunction.score_batch() → List[fl
 
 ---
 
-### `analysis.py` — Tracking and Export
+### `analysis.py` — Tracking, Export, and Stage Warmth Reporting
 
 `OptimizationTracker` attaches to the GA as a callback and records every generation.
 
@@ -476,12 +442,9 @@ Tracks:
 Exports:
 - `results/optimization_results.json` — full run data
 - `results/generation_summary.csv` — one row per generation
-- `results/stage_warmth_report.json` — per-stage snapshots (legacy wildtype mode only)
+- `results/stage_warmth_report.json` — per-stage warmth snapshots (wildtype mode only)
 
-`StageReporter` is a **legacy** class kept for the old wildtype-recovery experiment:
-it prints the warm/cold sequence-identity progress bar. The current workflow does
-not use it — progress is reported as the [LLR comparison](#how-we-measure-progress-llr-comparison)
-by `evolutionary_search.py`.
+`StageReporter` is the second major class here. It fires at the end of each stage (fifth by default) and prints the warm/cold progress bar to stdout. It also exports the full stage breakdown to JSON.
 
 ```python
 tracker.score_trajectory    # List[float] — plot convergence
@@ -538,45 +501,33 @@ OptimizationResult
 
 ## Project Structure
 
-The project now lives at the **repository root** (`Test/`) so the README and all
-files are visible on the GitHub landing page — no more digging into a subfolder.
-
 ```
-Test/                              # repo root (this README renders here)
-├── protein_optimizer/             # Main Python package
-│   ├── __init__.py                # Public API surface
-│   ├── config.py                  # All config dataclasses
-│   ├── esm.py                     # ESM-2 mutation proposals
-│   ├── mutation.py                # Random + ESM-guided mutators, crossover
-│   ├── bioemu.py                  # BioEmu wrapper + mock backend (LLR source)
-│   ├── scoring.py                 # Composite fitness scoring (legacy GA path)
-│   ├── genetic_algorithm.py       # GA engine (biology-agnostic)
-│   ├── evolutionary_search.py     # BudgetedEvolutionarySearch — the LLR-driven run
-│   ├── pipeline.py                # Orchestration layer (legacy GA path)
-│   └── analysis.py                # Tracking, logging, export
+protein_optimizer/
+├── protein_optimizer/          # Main package
+│   ├── __init__.py             # Public API surface
+│   ├── config.py               # All config dataclasses
+│   ├── esm.py                  # ESM-2 mutation proposals
+│   ├── mutation.py             # Random + ESM-guided mutators, crossover
+│   ├── bioemu.py               # BioEmu wrapper + mock backend
+│   ├── scoring.py              # Composite fitness scoring function
+│   ├── genetic_algorithm.py    # GA engine (biology-agnostic)
+│   ├── pipeline.py             # Orchestration layer
+│   └── analysis.py             # Tracking, logging, export
 │
 ├── config/
-│   ├── default.yaml               # GA-pipeline parameters
-│   └── evolutionary.yaml          # Directed-evolution / LLR-search parameters
+│   └── default.yaml            # All tunable parameters
 │
 ├── scripts/
-│   ├── run_optimization.py        # Python API usage examples
-│   └── bioemu_gif_maker.py        # Render a GIF from BioEmu trajectories
+│   └── run_optimization.py     # Python API usage examples
 │
 ├── tests/
-│   ├── test_mutation.py           # Mutator + crossover tests
-│   ├── test_scoring.py            # Scoring component tests
-│   ├── test_ga.py                 # GA + full pipeline integration tests
-│   └── test_wildtype.py           # Legacy wildtype-proximity / stage tests
+│   ├── test_mutation.py        # Mutator + crossover tests
+│   ├── test_scoring.py         # Scoring component tests
+│   └── test_ga.py              # GA + full pipeline integration tests
 │
-├── main.py                        # CLI entry point (LLR evolutionary search)
-├── practice.sh                    # Ready-made recovery demo
-├── setup_vm.sh                    # One-time GPU VM setup
+├── main.py                     # CLI entry point
 └── pyproject.toml
 ```
-
-> `AI-Harness/` also sits at the repo root as a separate git submodule — it is
-> unrelated to the protein optimizer.
 
 ---
 
@@ -664,10 +615,15 @@ python main.py --config config/evolutionary.yaml \
 python main.py --config config/evolutionary.yaml \
     --sequence DEFECTIVE_SEQUENCE --target -1.5
 
-# No GPU (mock BioEmu + random mutations) — rehearse the LLR search on CPU
-python main.py --config config/evolutionary.yaml --mock --random-mutations
+# No GPU (mock BioEmu + random mutations)
+python main.py --config config/default.yaml --mock --random-mutations
 
-# Legacy GA pipeline (composite fitness, not LLR comparison)
+# Wildtype recovery experiment (no GPU)
+python main.py --config config/default.yaml --mock --random-mutations \
+    --set wildtype_sequence=MKTLLILAVLCLGFAQAS \
+    --set original_sequence=ACDEFGHIKLMNPQRSTV
+
+# Full run
 python main.py --config config/default.yaml
 
 # Override any config field at runtime
@@ -700,8 +656,7 @@ print(result.best_score)
 print(result.tracker.summary_report())
 ```
 
-**Legacy wildtype recovery mode** (sequence-identity warm/cold — superseded by the
-[LLR comparison](#how-we-measure-progress-llr-comparison), kept only for reference):
+**Wildtype recovery mode:**
 
 ```python
 cfg = OptimizationConfig()
@@ -712,7 +667,8 @@ cfg.ga.n_stages = 5    # fifths by default
 
 pipeline = ProteinOptimizationPipeline(cfg)
 result = pipeline.run()
-# Prints the old warm/cold stage report; snapshots → results/stage_warmth_report.json
+# Automatically prints warm/cold stage report during the run.
+# Stage snapshots saved to results/stage_warmth_report.json
 ```
 
 See `scripts/run_optimization.py` for more examples including custom scorers and score breakdowns.
@@ -779,7 +735,7 @@ ga = GeneticAlgorithm(..., callbacks=[tracker.on_generation, log_to_wandb])
 ## Testing
 
 ```bash
-# Run all 76 tests
+# Run all 71 tests
 python3 -m pytest tests/ -v
 
 # With coverage
