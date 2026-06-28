@@ -1,6 +1,7 @@
 experiment_name: "evolutionary_search_v1"
 
 # The reference/starting sequence to score and mutate
+original_sequence: "MKTLLILAVLCLGFAQASGNIERPIDGFHGDLQSLIKAMFESRHITAYIEQLEELRQRQTAATGGMRQ"
 
 # No wildtype target — fitness is determined purely by BioEmu LLR
 wildtype_sequence: ""
