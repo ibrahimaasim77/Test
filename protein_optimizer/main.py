@@ -43,6 +43,20 @@ from protein_optimizer.evolutionary_search import BudgetedEvolutionarySearch
 logger = logging.getLogger(__name__)
 
 
+def format_mutations(original: str, variant: str) -> str:
+    """Return the point mutations of `variant` vs. `original` as e.g. 'L5I, Q34K'.
+
+    Positions are 1-indexed (biology convention). Assumes equal length
+    (point substitutions only). Returns '(none)' if the sequences are identical.
+    """
+    muts = [
+        f"{o}{i}{v}"
+        for i, (o, v) in enumerate(zip(original, variant), start=1)
+        if o != v
+    ]
+    return ", ".join(muts) if muts else "(none)"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Protein Sequence Optimization — ESM-2 mutations scored by BioEmu LLR",
@@ -226,10 +240,11 @@ def main() -> None:
 
     # Top 10 mutants
     print(f"\n  Top 10 mutant sequences (by LLR):")
-    print(f"  {'Rank':>4}  {'LLR':>8}  Sequence")
-    print(f"  {'-'*4}  {'-'*8}  {'-'*45}")
+    print(f"  {'Rank':>4}  {'LLR':>8}  {'Sequence':<{len(cfg.original_sequence)}}  Mutations (vs. original)")
+    print(f"  {'-'*4}  {'-'*8}  {'-'*len(cfg.original_sequence)}  {'-'*25}")
     for rank, (seq, llr) in enumerate(result.ranked(10), 1):
-        print(f"  {rank:>4}  {llr:>8.4f}  {seq}")
+        mutations = format_mutations(cfg.original_sequence, seq)
+        print(f"  {rank:>4}  {llr:>8.4f}  {seq}  {mutations}")
 
     print()
 
