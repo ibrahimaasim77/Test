@@ -24,6 +24,49 @@ Combines a **Genetic Algorithm (GA)** with **BioEmu** structural-ensemble infere
 
 ---
 
+## Wildtype Recovery Mode
+
+In addition to open-ended structural optimization, the system supports a **target-guided recovery experiment**:
+
+1. Provide a known **wildtype sequence** (the target)
+2. Provide a **degraded / mutated starting sequence** (the "bad" protein)
+3. The GA evolves the bad sequence back toward the wildtype, guided by both structural fitness **and** sequence identity
+4. Progress is visualised in **N equal stages** (default: fifths) with a warm/cold proximity indicator at each checkpoint
+
+This is useful for validating that the system works — if you know the answer, you can watch the GA find it.
+
+```
+  Stage 1/5  (gen 0–19)   ❄❄❄   COLD
+  Proximity to wildtype : [████████░░░░░░░░░░░░░░░░] 31.2%
+
+  Stage 2/5  (gen 20–39)  ❄❄    COOL
+  Proximity to wildtype : [████████████░░░░░░░░░░░░] 48.6%
+
+  Stage 3/5  (gen 40–59)  🔥    WARM
+  Proximity to wildtype : [████████████████░░░░░░░░] 65.3%
+
+  Stage 4/5  (gen 60–79)  🔥🔥   HOT
+  Proximity to wildtype : [████████████████████░░░░] 80.1%
+
+  Stage 5/5  (gen 80–99)  🔥🔥🔥  VERY HOT
+  Proximity to wildtype : [███████████████████████░] 92.7%
+```
+
+**Warmth scale:**
+
+| Identity | Label | Icons |
+|---|---|---|
+| 0–15% | FREEZING | ❄❄❄❄❄ |
+| 15–30% | ICY | ❄❄❄❄ |
+| 30–45% | COLD | ❄❄❄ |
+| 45–60% | COOL | ❄❄ |
+| 60–72% | WARM | 🔥 |
+| 72–84% | HOT | 🔥🔥 |
+| 84–93% | VERY HOT | 🔥🔥🔥 |
+| 93–100% | SCORCHING | 🔥🔥🔥🔥 |
+
+---
+
 ## Problem Statement
 
 Given:
@@ -151,7 +194,7 @@ To swap BioEmu for another model (AlphaFold, RoseTTAFold, etc.), subclass `BaseS
 
 ---
 
-### `scoring.py` — Fitness Function
+### `scoring.py` — Fitness Function (including Wildtype Proximity)
 
 Converts a `BioEmuOutput` into a single scalar fitness value in `[0, 1]`. This is the **central abstraction** — the GA sees only this number.
 
@@ -163,6 +206,9 @@ Four default component scorers, each returning `[0, 1]`:
 | `ConsistencyScorer` | Inverse pairwise distance variance | More consistent ensemble |
 | `EnergyScorer` | Normalised energy proxy | Lower energy (more stable) |
 | `CompactnessScorer` | Radius of gyration vs. ideal compact fold | More compact structure |
+| `WildtypeProximityScorer` | Normalised Hamming identity vs. wildtype target | Closer to wildtype |
+
+The `WildtypeProximityScorer` is **automatically injected** by the pipeline when `wildtype_sequence` is set in config. Its weight (`wildtype_proximity_weight`) is appended and all other weights are renormalised — so the rest of the scoring config does not need to change.
 
 For the landscape-optimization proof of concept, add a target-aware scorer:
 
@@ -249,7 +295,7 @@ sequences → BioEmu.infer_batch() → ScoringFunction.score_batch() → List[fl
 
 ---
 
-### `analysis.py` — Tracking and Export
+### `analysis.py` — Tracking, Export, and Stage Warmth Reporting
 
 `OptimizationTracker` attaches to the GA as a callback and records every generation.
 
@@ -262,6 +308,9 @@ Tracks:
 Exports:
 - `results/optimization_results.json` — full run data
 - `results/generation_summary.csv` — one row per generation
+- `results/stage_warmth_report.json` — per-stage warmth snapshots (wildtype mode only)
+
+`StageReporter` is the second major class here. It fires at the end of each stage (fifth by default) and prints the warm/cold progress bar to stdout. It also exports the full stage breakdown to JSON.
 
 ```python
 tracker.score_trajectory    # List[float] — plot convergence
@@ -415,6 +464,11 @@ logging:
 # No GPU (mock BioEmu + random mutations)
 python main.py --config config/default.yaml --mock --random-mutations
 
+# Wildtype recovery experiment (no GPU)
+python main.py --config config/default.yaml --mock --random-mutations \
+    --set wildtype_sequence=MKTLLILAVLCLGFAQAS \
+    --set original_sequence=ACDEFGHIKLMNPQRSTV
+
 # Full run
 python main.py --config config/default.yaml
 
@@ -446,6 +500,21 @@ result = pipeline.run()
 print(result.best_sequence)
 print(result.best_score)
 print(result.tracker.summary_report())
+```
+
+**Wildtype recovery mode:**
+
+```python
+cfg = OptimizationConfig()
+cfg.original_sequence = "ACDEFGHIKLMNPQRSTVWY"  # the "bad" starting protein
+cfg.wildtype_sequence  = "MKTLLILAVLCLGFAQAS"   # the known target
+cfg.bioemu.mock = True
+cfg.ga.n_stages = 5    # fifths by default
+
+pipeline = ProteinOptimizationPipeline(cfg)
+result = pipeline.run()
+# Automatically prints warm/cold stage report during the run.
+# Stage snapshots saved to results/stage_warmth_report.json
 ```
 
 See `scripts/run_optimization.py` for more examples including custom scorers and score breakdowns.
@@ -512,7 +581,7 @@ ga = GeneticAlgorithm(..., callbacks=[tracker.on_generation, log_to_wandb])
 ## Testing
 
 ```bash
-# Run all 43 tests
+# Run all 71 tests
 python3 -m pytest tests/ -v
 
 # With coverage
@@ -525,6 +594,7 @@ Test coverage:
 - `test_mutation.py` — RandomMutator, CrossoverOperator, allowed_positions, build_mutator factory
 - `test_scoring.py` — All 4 component scorers, composite ScoringFunction, custom scorer registration, weight validation
 - `test_ga.py` — ConvergenceTracker, selectors, full GA loop, population sizing, pipeline integration, input validation
+- `test_wildtype.py` — WildtypeProximityScorer, warmth_label scale, StageReporter boundaries + snapshots + export, full wildtype pipeline integration
 
 ---
 

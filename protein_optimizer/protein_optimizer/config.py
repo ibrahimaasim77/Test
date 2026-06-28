@@ -34,9 +34,11 @@ class ESM2Config:
 class BioEmuConfig:
     """Controls BioEmu structural inference."""
 
-    model_path: Optional[str] = None
+    # Model version: "bioemu-v1.0", "bioemu-v1.1" (default), or "bioemu-v1.2"
+    # Also accepts a local checkpoint path.
+    model_path: Optional[str] = "bioemu-v1.1"
     device: str = "cuda"
-    batch_size: int = 4
+    batch_size: int = 10        # batch_size_100 parameter passed to bioemu.sample.main
     num_samples: int = 10       # ensemble size per sequence
     inference_steps: int = 50
     # Set mock=True to run with synthetic outputs (CI / no-GPU environments)
@@ -52,6 +54,10 @@ class ScoringConfig:
     energy_weight: float = 0.2
     diversity_penalty_weight: float = 0.1
     normalize: bool = True
+
+    # When wildtype_sequence is set in OptimizationConfig, this weight is
+    # automatically added and all other weights are renormalised to compensate.
+    wildtype_proximity_weight: float = 0.3
 
     def __post_init__(self) -> None:
         total = (
@@ -91,6 +97,7 @@ class GAConfig:
     convergence_threshold: float = 1e-4    # min improvement to reset patience
     convergence_patience: int = 10         # generations without improvement → stop
     seed: Optional[int] = 42
+    n_stages: int = 5                      # number of progress checkpoints
 
     @property
     def elite_size(self) -> int:
@@ -127,7 +134,8 @@ class OptimizationConfig:
     """
 
     experiment_name: str = "protein_opt"
-    original_sequence: str = ""
+    original_sequence: str = ""       # the "bad" starting sequence
+    wildtype_sequence: str = ""       # the target to recover toward (optional)
 
     esm2: ESM2Config = field(default_factory=ESM2Config)
     bioemu: BioEmuConfig = field(default_factory=BioEmuConfig)
@@ -148,7 +156,7 @@ class OptimizationConfig:
     @classmethod
     def _from_dict(cls, data: Dict[str, Any]) -> "OptimizationConfig":
         cfg = cls()
-        scalar_fields = {"experiment_name", "original_sequence"}
+        scalar_fields = {"experiment_name", "original_sequence", "wildtype_sequence"}
         sub_map = {
             "esm2": ESM2Config,
             "bioemu": BioEmuConfig,

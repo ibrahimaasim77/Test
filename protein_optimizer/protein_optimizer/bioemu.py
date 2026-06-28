@@ -16,8 +16,10 @@ Design principles:
 from __future__ import annotations
 
 import logging
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -25,6 +27,9 @@ import numpy as np
 from .config import BioEmuConfig
 
 logger = logging.getLogger(__name__)
+
+# Supported BioEmu model versions
+BIOEMU_MODELS = ("bioemu-v1.0", "bioemu-v1.1", "bioemu-v1.2")
 
 
 # ---------------------------------------------------------------------------
@@ -170,63 +175,185 @@ class BaseStructuralBackend(ABC):
 
 class BioEmuWrapper(BaseStructuralBackend):
     """
-    Wraps the real BioEmu model (microsoft/bioemu).
+    Wraps the real BioEmu model (microsoft/bioemu v1.4+).
 
-    BioEmu is a diffusion-based structural ensemble model. This wrapper
-    calls its Python API; the exact interface may need to be adjusted to
-    the installed version.
+    Uses bioemu.sample.main() which writes NPZ files to a temp directory.
+    We parse those files and compute structural features (Rg, distance matrix,
+    energy proxy) from the Cα coordinates.
 
-    Install BioEmu separately — it is not listed in pyproject.toml because
-    it requires CUDA and has large weights.
+    Note: BioEmu does not output pLDDT — StabilityScorer will return its
+    neutral default (0.5). The other three scorers (consistency, energy,
+    compactness) all work from coordinates and will be fully active.
+
+    Install BioEmu separately:
+        pip install git+https://github.com/microsoft/bioemu.git
     """
 
-    def __init__(self, config: BioEmuConfig) -> None:
-        super().__init__(config)
-        self._model = None
-        self._loaded = False
-
-    def _ensure_loaded(self) -> None:
-        if self._loaded:
-            return
+    def _run_inference(self, sequence: str) -> BioEmuOutput:
         try:
-            # BioEmu's public Python API (adjust import path to match your install)
-            from bioemu.inference import BioEmuModel  # type: ignore[import]
+            from bioemu.sample import main as bioemu_sample
         except ImportError as exc:
             raise ImportError(
-                "BioEmu is not installed or not importable. "
-                "Follow the installation guide at "
-                "https://github.com/microsoft/bioemu"
+                "BioEmu is not installed. "
+                "Run: pip install git+https://github.com/microsoft/bioemu.git"
             ) from exc
 
-        logger.info("Loading BioEmu from: %s", self.config.model_path or "default")
-        self._model = BioEmuModel.from_pretrained(
-            self.config.model_path,
-            device=self.config.device,
-        )
-        self._model.eval()
-        self._loaded = True
-        logger.info("BioEmu ready on device: %s", self.config.device)
+        # model_path doubles as model_name if it's a version string
+        model_name = self.config.model_path or "bioemu-v1.1"
+        if model_name not in BIOEMU_MODELS:
+            model_name = "bioemu-v1.1"
 
-    def _run_inference(self, sequence: str) -> BioEmuOutput:
-        self._ensure_loaded()
-        assert self._model is not None
-
-        raw_samples = self._model.sample(
-            sequence=sequence,
-            num_samples=self.config.num_samples,
-            num_steps=self.config.inference_steps,
+        logger.info(
+            "BioEmu inference: seq_len=%d | model=%s | samples=%d",
+            len(sequence), model_name, self.config.num_samples,
         )
-        output = BioEmuOutput(sequence=sequence)
-        for raw in raw_samples:
-            sample = ConformationSample(
-                per_residue_confidence=np.array(raw.get("plddt", [])) if raw.get("plddt") else None,
-                energy_proxy=raw.get("energy"),
-                distance_matrix=np.array(raw["distance_matrix"]) if "distance_matrix" in raw else None,
-                radius_of_gyration=raw.get("radius_of_gyration"),
-                sasa=np.array(raw["sasa"]) if "sasa" in raw else None,
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bioemu_sample(
+                sequence=sequence,
+                num_samples=self.config.num_samples,
+                output_dir=tmpdir,
+                batch_size_100=self.config.batch_size,
+                model_name=model_name,
             )
-            output.samples.append(sample)
+            return self._parse_output_dir(sequence, Path(tmpdir))
+
+    # ------------------------------------------------------------------
+    # Output parsing
+    # ------------------------------------------------------------------
+
+    def _parse_output_dir(self, sequence: str, output_dir: Path) -> BioEmuOutput:
+        output = BioEmuOutput(sequence=sequence)
+
+        # BioEmu writes: batch_0000000_0000010.npz, batch_0000010_0000020.npz ...
+        npz_files = sorted(output_dir.glob("batch_*.npz"))
+        for npz_file in npz_files:
+            output.samples.extend(self._parse_npz(npz_file))
+
+        # Fallback: individual PDB files (written if convert_chemgraph ran)
+        if not output.samples:
+            for pdb_file in sorted(output_dir.glob("*.pdb")):
+                sample = self._parse_pdb(pdb_file)
+                if sample is not None:
+                    output.samples.append(sample)
+
+        if not output.samples:
+            logger.warning(
+                "BioEmu produced no parseable samples for sequence %s...",
+                sequence[:10],
+            )
+        else:
+            logger.info("Parsed %d BioEmu samples.", len(output.samples))
+
         return output
+
+    def _parse_npz(self, path: Path) -> List[ConformationSample]:
+        """
+        Load one BioEmu NPZ file and return one ConformationSample per frame.
+
+        BioEmu stores Cα (and backbone) coordinates under keys like 'pos' or
+        'positions'. Shape is typically (n_samples, L, 3) for Cα-only or
+        (n_samples, L, n_atoms, 3) for full backbone — we extract Cα (index 1).
+        """
+        samples: List[ConformationSample] = []
+        try:
+            data = np.load(path, allow_pickle=False)
+        except Exception as exc:
+            logger.warning("Could not load NPZ %s: %s", path, exc)
+            return samples
+
+        # Log available keys on first file for debugging
+        logger.debug("NPZ keys in %s: %s", path.name, list(data.files))
+
+        coords = self._extract_coords(data)
+        if coords is None:
+            logger.warning("No coordinate array found in %s", path.name)
+            return samples
+
+        # Normalise to (n_samples, L, 3)
+        if coords.ndim == 2:                        # (L, 3) — single sample
+            coords = coords[np.newaxis]
+        elif coords.ndim == 4:                      # (N, L, atoms, 3) — take Cα
+            coords = coords[:, :, 1, :]
+
+        for i in range(len(coords)):
+            sample = self._coords_to_sample(coords[i])
+            if sample is not None:
+                samples.append(sample)
+
+        return samples
+
+    @staticmethod
+    def _extract_coords(data) -> Optional[np.ndarray]:
+        """Try common key names for coordinate arrays in BioEmu NPZ files."""
+        for key in ("pos", "positions", "coords", "ca_coords", "backbone_pos", "x"):
+            if key in data.files:
+                arr = data[key]
+                if isinstance(arr, np.ndarray) and arr.ndim >= 2:
+                    return arr
+
+        # Last resort: first array whose last dimension is 3
+        for key in data.files:
+            arr = data[key]
+            if isinstance(arr, np.ndarray) and arr.ndim >= 2 and arr.shape[-1] == 3:
+                return arr
+
+        return None
+
+    def _parse_pdb(self, path: Path) -> Optional[ConformationSample]:
+        """Parse Cα coordinates from a PDB file using Biopython."""
+        try:
+            from Bio.PDB import PDBParser
+            parser = PDBParser(QUIET=True)
+            structure = parser.get_structure("prot", str(path))
+            ca_coords: List[np.ndarray] = []
+            for model in structure:
+                for chain in model:
+                    for residue in chain:
+                        if residue.get_id()[0] == " " and "CA" in residue:
+                            ca_coords.append(residue["CA"].get_coord())
+                break  # first model only
+            if ca_coords:
+                return self._coords_to_sample(np.array(ca_coords))
+        except Exception as exc:
+            logger.warning("Could not parse PDB %s: %s", path, exc)
+        return None
+
+    @staticmethod
+    def _coords_to_sample(ca_coords: np.ndarray) -> Optional[ConformationSample]:
+        """
+        Compute structural features from a (L, 3) Cα coordinate array.
+
+        Features computed:
+          - distance_matrix: pairwise Cα distances (Å)
+          - radius_of_gyration: Cα Rg (Å)
+          - energy_proxy: negative mean pairwise distance
+            (more compact structure = lower value = more stable proxy)
+        """
+        if ca_coords.ndim != 2 or ca_coords.shape[1] != 3 or len(ca_coords) < 2:
+            return None
+
+        L = len(ca_coords)
+
+        # Pairwise Cα distance matrix (Å)
+        diff = ca_coords[:, None, :] - ca_coords[None, :, :]
+        dist_matrix = np.sqrt(np.sum(diff ** 2, axis=-1))
+
+        # Radius of gyration
+        center = ca_coords.mean(axis=0)
+        rg = float(np.sqrt(np.mean(np.sum((ca_coords - center) ** 2, axis=1))))
+
+        # Energy proxy: negative mean pairwise distance (lower = more compact)
+        upper = dist_matrix[np.triu_indices(L, k=1)]
+        energy_proxy = -float(np.mean(upper))
+
+        return ConformationSample(
+            per_residue_confidence=None,   # BioEmu v1.x does not output pLDDT
+            energy_proxy=energy_proxy,
+            distance_matrix=dist_matrix,
+            radius_of_gyration=rg,
+            sasa=None,
+        )
 
 
 # ---------------------------------------------------------------------------

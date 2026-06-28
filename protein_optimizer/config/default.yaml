@@ -1,7 +1,11 @@
 experiment_name: "protein_opt_v1"
 
-# Paste your protein sequence here (single-letter AA codes, no spaces)
+# The degraded / mutated starting sequence (the "bad" protein)
 original_sequence: "MKTLLILAVLCLGFAQASGNIERPIDGFHGDLQSLIKAMFESRHITAYIEQLEELRQRQTAATGGMRQ"
+
+# The known target sequence to recover toward.
+# Leave blank ("") to run purely structural optimization without a target.
+wildtype_sequence: ""
 
 esm2:
   model_name: "facebook/esm2_t33_650M_UR50D"
@@ -25,6 +29,9 @@ scoring:
   energy_weight: 0.20
   diversity_penalty_weight: 0.10
   normalize: true
+  # Weight given to wildtype sequence identity when wildtype_sequence is set.
+  # Existing weights above are automatically renormalised to compensate.
+  wildtype_proximity_weight: 0.30
 
 mutation:
   strategy: "esm_guided"   # "random" or "esm_guided"
@@ -43,6 +50,7 @@ ga:
   convergence_threshold: 0.0001
   convergence_patience: 10
   seed: 42
+  n_stages: 5       # number of warmth checkpoints (default: 5 = fifths)
 
 logging:
   output_dir: "results"

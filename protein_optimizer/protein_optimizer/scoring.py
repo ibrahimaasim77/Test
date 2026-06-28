@@ -331,6 +331,55 @@ class ConformationalLandscapeScorer(ComponentScorer):
 
 
 # ---------------------------------------------------------------------------
+# Wildtype proximity scorer
+# ---------------------------------------------------------------------------
+
+
+class WildtypeProximityScorer(ComponentScorer):
+    """
+    Measures how close a sequence is to a known wildtype target.
+
+    Uses normalised Hamming identity: fraction of positions that match.
+    A score of 1.0 means the sequence IS the wildtype. 0.0 means no shared
+    residues at any position.
+
+    This scorer holds a reference to the wildtype sequence and is injected
+    into the ScoringFunction by the pipeline when wildtype_sequence is set.
+    It does not derive its value from BioEmu outputs — it operates directly
+    on the sequence stored in output.sequence.
+    """
+
+    name = "wildtype_proximity"
+
+    def __init__(self, wildtype_sequence: str) -> None:
+        self.wildtype = wildtype_sequence
+
+    def score(self, output: BioEmuOutput) -> float:
+        seq = output.sequence
+        if not seq or not self.wildtype:
+            return 0.0
+        length = min(len(seq), len(self.wildtype))
+        if length == 0:
+            return 0.0
+        matches = sum(a == b for a, b in zip(seq, self.wildtype))
+        return float(matches / length)
+
+    @staticmethod
+    def hamming_distance(seq_a: str, seq_b: str) -> int:
+        """Number of positions that differ between two equal-length sequences."""
+        return sum(a != b for a, b in zip(seq_a, seq_b))
+
+    @staticmethod
+    def sequence_identity(seq_a: str, seq_b: str) -> float:
+        """Fraction of identical positions. Clamped to shortest length."""
+        length = min(len(seq_a), len(seq_b))
+        if length == 0:
+            return 0.0
+        matches = sum(a == b for a, b in zip(seq_a, seq_b))
+        return matches / length
+
+
+# ---------------------------------------------------------------------------
 # Composite scoring function
 # ---------------------------------------------------------------------------
 

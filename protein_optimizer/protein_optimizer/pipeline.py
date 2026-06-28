@@ -29,13 +29,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from .analysis import OptimizationTracker
+from .analysis import OptimizationTracker, StageReporter
 from .bioemu import BaseStructuralBackend, build_bioemu_backend
 from .config import OptimizationConfig
 from .esm import ESM2MutationProposer
 from .genetic_algorithm import GeneticAlgorithm
 from .mutation import CrossoverOperator, build_mutator
-from .scoring import ScoringFunction
+from .scoring import ScoringFunction, WildtypeProximityScorer
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +118,15 @@ class ProteinOptimizationPipeline:
             original_sequence=config.original_sequence,
         )
 
+        # Wildtype proximity scorer — injected into scoring fn when target is set
+        self._stage_reporter: Optional[StageReporter] = None
+        if config.wildtype_sequence:
+            self._attach_wildtype_scorer()
+            self._stage_reporter = StageReporter(
+                wildtype_sequence=config.wildtype_sequence,
+                ga_config=config.ga,
+            )
+
         # GA (constructed in run() so callbacks are set once tracker is ready)
         self._ga: Optional[GeneticAlgorithm] = None
 
@@ -141,12 +150,16 @@ class ProteinOptimizationPipeline:
             len(self.config.original_sequence),
         )
 
+        callbacks = [self._tracker.on_generation]
+        if self._stage_reporter is not None:
+            callbacks.append(self._stage_reporter.on_generation)
+
         self._ga = GeneticAlgorithm(
             config=self.config.ga,
             fitness_fn=self._evaluate_population,
             mutator=self._mutator,
             crossover=self._crossover,
-            callbacks=[self._tracker.on_generation],
+            callbacks=callbacks,
         )
 
         start_time = time.time()
@@ -155,6 +168,14 @@ class ProteinOptimizationPipeline:
         elapsed = time.time() - start_time
 
         export_paths = self._tracker.export()
+
+        if self._stage_reporter is not None:
+            print(self._stage_reporter.stage_report())
+            stage_path = self._stage_reporter.export_stages(
+                self.config.logging.output_dir
+            )
+            export_paths["stages"] = stage_path
+
         print(self._tracker.summary_report())
 
         logger.info(
@@ -217,6 +238,30 @@ class ProteinOptimizationPipeline:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _attach_wildtype_scorer(self) -> None:
+        """
+        Directly append WildtypeProximityScorer into the scoring function and
+        renormalise all weights so they still sum to 1.0.
+
+        The wildtype_proximity_weight from ScoringConfig determines how much
+        the GA is pulled toward the target vs. purely structural fitness.
+        """
+        wt_weight = self.config.scoring.wildtype_proximity_weight
+        scorer = WildtypeProximityScorer(self.config.wildtype_sequence)
+
+        self._scorer._components.append(scorer)
+        self._scorer._weights.append(wt_weight)
+
+        # Renormalise all weights
+        total = sum(self._scorer._weights)
+        self._scorer._weights = [w / total for w in self._scorer._weights]
+
+        logger.info(
+            "Wildtype proximity scorer active (weight=%.2f) | target: %s...",
+            wt_weight,
+            self.config.wildtype_sequence[:20],
+        )
 
     def _validate_config(self) -> None:
         if not self.config.original_sequence:
