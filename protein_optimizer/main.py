@@ -1,89 +1,122 @@
 """
-Entry point for the Protein Optimization Framework.
+Protein Optimization — Entry Point
 
-Quick start (no GPU — uses mock BioEmu):
+Default usage (runs evolutionary search with ESM-2 + BioEmu):
 
-    python main.py --config config/default.yaml --mock
+    python main.py --config config/evolutionary.yaml
 
-Full run:
+Override the sequence on the command line:
 
-    python main.py --config config/default.yaml --sequence MKTLLILAVLCLGFAQ
+    python main.py --config config/evolutionary.yaml \
+        --sequence MKTLLILAVLCLGFAQASG...
 
-Override any top-level config field via --set:
+GPU-free development (synthetic BioEmu outputs):
 
-    python main.py --config config/default.yaml \
-        --set ga.population_size=100 \
-        --set ga.max_generations=200 \
-        --set bioemu.mock=true
+    python main.py --config config/evolutionary.yaml --mock
+
+Verbose round-by-round scoring:
+
+    python main.py --config config/evolutionary.yaml --verbose
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
-# Allow running from repo root without installing the package
+# Silence HuggingFace Hub's "set a HF_TOKEN" warning — we intentionally use
+# unauthenticated public model downloads (no account/token needed). Must run
+# before transformers / huggingface_hub are imported.
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("HF_HUB_DISABLE_IMPLICIT_TOKEN", "1")
+logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+
 sys.path.insert(0, str(Path(__file__).parent))
 
-from protein_optimizer import OptimizationConfig, ProteinOptimizationPipeline
+from protein_optimizer import OptimizationConfig
+from protein_optimizer.bioemu import write_trajectory_files
+from protein_optimizer.evolutionary_search import BudgetedEvolutionarySearch
 
 logger = logging.getLogger(__name__)
 
 
+def format_mutations(original: str, variant: str) -> str:
+    """Return the point mutations of `variant` vs. `original` as e.g. 'L5I, Q34K'.
+
+    Positions are 1-indexed (biology convention). Assumes equal length
+    (point substitutions only). Returns '(none)' if the sequences are identical.
+    """
+    muts = [
+        f"{o}{i}{v}"
+        for i, (o, v) in enumerate(zip(original, variant), start=1)
+        if o != v
+    ]
+    return ", ".join(muts) if muts else "(none)"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Protein Sequence Optimization via Genetic Algorithm + BioEmu + ESM-2",
+        description="Protein Sequence Optimization — ESM-2 mutations scored by BioEmu LLR",
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
         "--config",
-        default="config/default.yaml",
-        help="Path to YAML config file (default: config/default.yaml)",
+        default="config/evolutionary.yaml",
+        help="Path to YAML config file (default: config/evolutionary.yaml)",
     )
     parser.add_argument(
         "--sequence",
         default=None,
-        help="Override original_sequence from config (single-letter AA codes)",
+        help="Protein sequence to optimise (single-letter AA codes). Overrides config.",
+    )
+    parser.add_argument(
+        "--target",
+        type=float,
+        default=None,
+        metavar="LLR",
+        help="Optimise toward this goal LLR (fit-to-target mode) instead of maximising",
+    )
+    parser.add_argument(
+        "--healthy-sequence",
+        default=None,
+        help="A healthy protein sequence; its BioEmu LLR becomes the goal to optimise toward",
     )
     parser.add_argument(
         "--mock",
         action="store_true",
-        help="Run with mock BioEmu backend (no GPU required)",
+        help="Use synthetic BioEmu outputs — no GPU required (for testing)",
     )
     parser.add_argument(
         "--random-mutations",
         action="store_true",
-        help="Use random mutations instead of ESM-2 guided (faster, lower quality)",
+        help="Use random mutations instead of ESM-2 (no HuggingFace download needed)",
     )
     parser.add_argument(
-        "--output-dir",
-        default=None,
-        help="Override results output directory",
+        "--verbose",
+        action="store_true",
+        help="Print live scoring table after each round",
     )
     parser.add_argument(
         "--set",
         action="append",
         metavar="KEY=VALUE",
         default=[],
-        help="Override config fields (e.g. --set ga.population_size=100)",
+        help="Override any config field, e.g. --set ga.population_size=100",
     )
     return parser.parse_args()
 
 
 def apply_overrides(cfg: OptimizationConfig, overrides: list[str]) -> None:
-    """Apply dot-notation overrides: 'ga.population_size=100'"""
     for override in overrides:
         if "=" not in override:
             raise ValueError(f"Invalid override format: {override!r}. Expected KEY=VALUE")
         key_path, _, raw_value = override.partition("=")
         parts = key_path.strip().split(".")
-
-        # Coerce value type
-        value: object
         if raw_value.lower() in ("true", "false"):
-            value = raw_value.lower() == "true"
+            value: object = raw_value.lower() == "true"
         else:
             try:
                 value = int(raw_value)
@@ -92,47 +125,128 @@ def apply_overrides(cfg: OptimizationConfig, overrides: list[str]) -> None:
                     value = float(raw_value)
                 except ValueError:
                     value = raw_value
-
-        # Navigate to target sub-config
         obj = cfg
         for part in parts[:-1]:
             obj = getattr(obj, part)
         setattr(obj, parts[-1], value)
-        logger.debug("Config override: %s = %r", key_path, value)
 
 
 def main() -> None:
     args = parse_args()
 
-    # Load config
     config_path = Path(args.config)
     if not config_path.exists():
         print(f"Config file not found: {config_path}")
         sys.exit(1)
 
     cfg = OptimizationConfig.from_yaml(config_path)
-
-    # Apply CLI overrides (in order of precedence)
     apply_overrides(cfg, args.set)
 
     if args.sequence:
         cfg.original_sequence = args.sequence.upper().strip()
+    if args.target is not None:
+        cfg.target_parameter = args.target
+    if args.healthy_sequence:
+        cfg.healthy_sequence = args.healthy_sequence.upper().strip()
     if args.mock:
         cfg.bioemu.mock = True
     if args.random_mutations:
         cfg.mutation.strategy = "random"
-    if args.output_dir:
-        cfg.logging.output_dir = args.output_dir
+    else:
+        cfg.mutation.strategy = "esm_guided"
 
-    # Run
-    pipeline = ProteinOptimizationPipeline(cfg)
-    result = pipeline.run()
+    # Configure logging
+    logging.basicConfig(
+        level=getattr(logging, cfg.logging.log_level, logging.INFO),
+        format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
-    print(f"\nBest sequence : {result.best_sequence}")
-    print(f"Best score    : {result.best_score:.4f}")
-    print(f"Generations   : {result.generations_run}")
-    print(f"Wall time     : {result.total_wall_time_s:.1f}s")
-    print(f"Results saved : {result.export_paths}")
+    print(f"\nStarting evolutionary search")
+    print(f"  Sequence  : {cfg.original_sequence[:60]}{'...' if len(cfg.original_sequence) > 60 else ''}")
+    print(f"  Length    : {len(cfg.original_sequence)} residues")
+    print(f"  Strategy  : {'ESM-2 guided' if cfg.mutation.strategy == 'esm_guided' else 'random'} mutations")
+    print(f"  Rounds    : {cfg.ga.max_generations}  ×  {cfg.ga.population_size} candidates  "
+          f"= {cfg.ga.max_generations * cfg.ga.population_size} total")
+    if cfg.healthy_sequence:
+        print(f"  Goal      : match healthy protein's LLR (fit-to-target)")
+    elif cfg.target_parameter is not None:
+        print(f"  Goal      : reach target LLR = {cfg.target_parameter} (fit-to-target)")
+    else:
+        print(f"  Goal      : maximise LLR (no target set)")
+    print(f"  BioEmu    : {'MOCK (synthetic)' if cfg.bioemu.mock else 'REAL'}\n")
+
+    search = BudgetedEvolutionarySearch(cfg, verbose=args.verbose)
+    result = search.run()
+
+    # ------------------------------------------------------------------
+    # Save trajectory files for reference + best sequences
+    # ------------------------------------------------------------------
+    traj_base = Path(cfg.bioemu.trajectory_dir)
+    ref_traj_paths = {}
+    best_traj_paths = {}
+
+    if result.reference_output is not None:
+        ref_dir = traj_base / "reference"
+        ref_traj_paths = write_trajectory_files(result.reference_output, ref_dir)
+
+    if result.best_output is not None:
+        best_dir = traj_base / "best_mutant"
+        best_traj_paths = write_trajectory_files(result.best_output, best_dir)
+
+    # ------------------------------------------------------------------
+    # Results
+    # ------------------------------------------------------------------
+    print("\n" + "=" * 65)
+    print("  RESULTS")
+    print("=" * 65)
+
+    if result.target_parameter is not None:
+        # Fit-to-target mode (in silico directed evolution toward a goal)
+        start_dist = abs(result.reference_llr - result.target_parameter)
+        best_dist = abs(result.best_llr - result.target_parameter)
+        print(f"\n  Defective sequence parameter : {result.reference_llr:8.4f}   (start)")
+        print(f"  Target (goal) parameter      : {result.target_parameter:8.4f}   (what we optimise toward)")
+        print(f"  Best engineered parameter    : {result.best_llr:8.4f}"
+              + ("   [closer to goal]" if result.improved else "   [no improvement]"))
+        print()
+        print(f"  Distance to goal: {start_dist:.4f}  →  {best_dist:.4f}   "
+              f"(closed {start_dist - best_dist:+.4f})")
+    else:
+        # Maximise mode (no target set)
+        print(f"\n  When we ran the original sequence through BioEmu,")
+        print(f"  it received an LLR of  {result.reference_llr:.4f}")
+        print()
+        print(f"  The best mutant sequence our search found")
+        print(f"  achieved an LLR of     {result.best_llr:.4f}"
+              + ("  [improved]" if result.improved else "  [no improvement]"))
+        print()
+        print(f"  LLR change             {result.best_llr - result.reference_llr:+.4f}   (higher = more favourable)")
+
+    print(f"\n  Best sequence:")
+    print(f"    {result.best_sequence}")
+
+    print(f"\n  Search stats:")
+    print(f"    Rounds run     : {result.rounds_run}")
+    print(f"    Total scored   : {result.total_evaluated}")
+    print(f"    Wall time      : {result.total_wall_time_s:.1f}s")
+
+    # Trajectory file locations
+    if ref_traj_paths or best_traj_paths:
+        print(f"\n  Trajectory files saved:")
+        for label, paths in [("Reference", ref_traj_paths), ("Best mutant", best_traj_paths)]:
+            for kind, p in paths.items():
+                print(f"    {label:12s} .{kind:3s} : {p}")
+
+    # Top 10 mutants
+    print(f"\n  Top 10 mutant sequences (by LLR):")
+    print(f"  {'Rank':>4}  {'LLR':>8}  {'Sequence':<{len(cfg.original_sequence)}}  Mutations (vs. original)")
+    print(f"  {'-'*4}  {'-'*8}  {'-'*len(cfg.original_sequence)}  {'-'*25}")
+    for rank, (seq, llr) in enumerate(result.ranked(10), 1):
+        mutations = format_mutations(cfg.original_sequence, seq)
+        print(f"  {rank:>4}  {llr:>8.4f}  {seq}  {mutations}")
+
+    print()
 
 
 if __name__ == "__main__":

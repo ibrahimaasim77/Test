@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Run outputs
+results/
+results/trajectories/
+
+# OS / editor
+.DS_Store

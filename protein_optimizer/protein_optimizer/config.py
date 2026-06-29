@@ -43,6 +43,8 @@ class BioEmuConfig:
     inference_steps: int = 50
     # Set mock=True to run with synthetic outputs (CI / no-GPU environments)
     mock: bool = False
+    # Where to write .pdb / .xtc trajectory files for the reference and best sequences
+    trajectory_dir: str = "results/trajectories"
 
 
 @dataclass
@@ -134,8 +136,17 @@ class OptimizationConfig:
     """
 
     experiment_name: str = "protein_opt"
-    original_sequence: str = ""       # the "bad" starting sequence
+    original_sequence: str = ""       # the "bad" / defective starting sequence
     wildtype_sequence: str = ""       # the target to recover toward (optional)
+
+    # In silico directed evolution target. The search optimises original_sequence
+    # so its BioEmu parameter (LLR) approaches this goal.
+    #   - target_parameter: a user-defined goal value (e.g. -1.5)
+    #   - healthy_sequence: a healthy protein scored once with BioEmu; its LLR
+    #     becomes the goal (takes precedence over target_parameter if both set)
+    # If neither is set, the search falls back to maximising the LLR.
+    target_parameter: Optional[float] = None
+    healthy_sequence: str = ""
 
     esm2: ESM2Config = field(default_factory=ESM2Config)
     bioemu: BioEmuConfig = field(default_factory=BioEmuConfig)
@@ -156,7 +167,10 @@ class OptimizationConfig:
     @classmethod
     def _from_dict(cls, data: Dict[str, Any]) -> "OptimizationConfig":
         cfg = cls()
-        scalar_fields = {"experiment_name", "original_sequence", "wildtype_sequence"}
+        scalar_fields = {
+            "experiment_name", "original_sequence", "wildtype_sequence",
+            "target_parameter", "healthy_sequence",
+        }
         sub_map = {
             "esm2": ESM2Config,
             "bioemu": BioEmuConfig,

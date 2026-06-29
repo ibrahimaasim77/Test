@@ -1,0 +1,152 @@
+18:52:27  INFO      protein_optimizer.evolutionary_search — Scoring reference sequence (len=3) ...
+18:52:30  INFO      protein_optimizer.bioemu — BioEmu inference: seq_len=3 | model=bioemu-v1.1 | samples=10
+18:52:30  INFO      bioemu.so3_sde — Data loaded from /root/sampling_so3_cache/cache_igso3_s0.020-2.330-1000_l2000_o2000-3.npz
+18:52:30  INFO      bioemu.so3_sde — Data loaded from /root/sampling_so3_cache/cache_uso3_s0.020-2.330-1000_o2000-3.npz
+18:52:30  INFO      bioemu.so3_sde — Data loaded from /root/sampling_so3_cache/cache_score-scaling_s0.020-2.330-1000_l2001_o2000-3.npz
+File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/bioemu/utils.py", line 59, in with_stackprint
+    56   @functools.wraps(func)
+    57   def with_stackprint(*args: P.args, **kwargs: P.kwargs) -> T:
+    58       try:
+--> 59           return func(*args, **kwargs)
+    60       except:
+    ..................................................
+     functools.wraps = <function 'wraps' functools.py:65>
+     func = <function 'main' _contextlib.py:120>
+     args = ()
+     P.args = P.args
+     kwargs = {'sequence': '...',
+               'num_samples': 10,
+               'output_dir': '/tmp/tmpqzfli4lr',
+               'batch_size_100': 4,
+               'model_name': 'bioemu-v1.1',
+               'filter_samples': False}
+     P.kwargs = P.kwargs
+     T = ~T
+    ..................................................
+
+File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    120  @functools.wraps(func)
+    121  def decorate_context(*args, **kwargs):
+    122      # pyrefly: ignore [bad-context-manager]
+    123      with ctx_factory():
+--> 124          return func(*args, **kwargs)
+    ..................................................
+     functools.wraps = <function 'wraps' functools.py:65>
+     func = <function 'main' sample.py:70>
+     args = ()
+     kwargs = {'sequence': '...',
+               'num_samples': 10,
+               'output_dir': '/tmp/tmpqzfli4lr',
+               'batch_size_100': 4,
+               'model_name': 'bioemu-v1.1',
+               'filter_samples': False}
+     ctx_factory = <method '_DecoratorContextManager.clone' of <torch.autograd.
+                    grad_mode.no_grad object at 0x761987bb5d90> _contextlib.py:1
+                    54>
+    ..................................................
+
+File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/bioemu/sample.py", line 199, in main
+    72   def main(
+    73       sequence: str | Path,
+    74       num_samples: int,
+    75       output_dir: str | Path,
+    76       batch_size_100: int = 10,
+    77       model_name: Literal["bioemu-v1.0", "bioemu-v1.1", "bioemu-v1.2"] | None = "bioemu-v1.1",
+    78       ckpt_path: str | Path | None = None,
+    79       model_config_path: str | Path | None = None,
+    80       denoiser_type: SupportedDenoisersLiteral | None = "dpm",
+    81       denoiser_config: str | Path | dict | None = None,
+    82       cache_embeds_dir: str | Path | None = None,
+    83       cache_so3_dir: str | Path | None = None,
+    84       msa_host_url: str | None = None,
+    85       filter_samples: bool = True,
+    86       steering_config: str | Path | dict | None = None,
+    87       base_seed: int | None = None,
+    88   ) -> None:
+ (...)
+    195      # Parse FASTA or A3M file if sequence is a file path. Extract the actual sequence.
+    196      sequence = parse_sequence(sequence)
+    197  
+    198      # Check input sequence is valid
+--> 199      check_protein_valid(sequence)
+    200  
+    ..................................................
+     sequence = '...'
+     num_samples = 10
+     output_dir = PosixPath('/tmp/tmpqzfli4lr')
+     batch_size_100 = 4
+     model_name = 'bioemu-v1.1'
+     ckpt_path = '/root/.cache/huggingface/hub/models--microsoft--bioemu/snap
+                  shots/1fec9d4473a9da04f5e60026a70d7a93fb893e9e/checkpoints/b
+                  ioemu-v1.1/checkpoint.ckpt'
+     model_config_path = '/root/.cache/huggingface/hub/models--microsoft--bioemu/snap
+                          shots/1fec9d4473a9da04f5e60026a70d7a93fb893e9e/checkpoints/b
+                          ioemu-v1.1/config.yaml'
+     denoiser_type = 'dpm'
+     denoiser_config = None
+     cache_embeds_dir = None
+     cache_so3_dir = None
+     msa_host_url = None
+     filter_samples = False
+     steering_config = None
+     base_seed = 1782672750439146260
+    ..................................................
+
+File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/bioemu/seq_io.py", line 61, in check_protein_valid
+    58   def check_protein_valid(seq: str) -> None:
+    59       """Checks that input protein sequence is consistent with the standard IUPAC 20 amino acid types"""
+    60       for aa in seq:
+--> 61           assert aa in IUPACPROTEIN, f"Sequence contains non-valid protein character: {aa}"
+    ..................................................
+     seq = '...'
+     aa = '.'
+     IUPACPROTEIN = frozenset({'V', 'A', 'W', 'S', 'G', 'D', 'M', 'L', 'I', 'T',
+                      'F', 'R', 'N', 'Y', 'H', 'Q', 'C', 'P', 'K', 'E'})
+    ..................................................
+
+---- (full traceback above) ----
+File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/bioemu/utils.py", line 59, in with_stackprint
+    return func(*args, **kwargs)
+File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/bioemu/sample.py", line 199, in main
+    check_protein_valid(sequence)
+File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/bioemu/seq_io.py", line 61, in check_protein_valid
+    assert aa in IUPACPROTEIN, f"Sequence contains non-valid protein character: {aa}"
+
+AssertionError: Sequence contains non-valid protein character: .
+
+Starting evolutionary search
+  Sequence  : ...
+  Length    : 3 residues
+  Strategy  : ESM-2 guided mutations
+  Rounds    : 5  ×  100 candidates  = 500 total
+  Goal      : match healthy protein's LLR (fit-to-target)
+  BioEmu    : REAL
+
+Traceback (most recent call last):
+  File "/workspace/Test/protein_optimizer/main.py", line 238, in <module>
+    main()
+  File "/workspace/Test/protein_optimizer/main.py", line 166, in main
+    result = search.run()
+             ^^^^^^^^^^^^
+  File "/workspace/Test/protein_optimizer/protein_optimizer/evolutionary_search.py", line 150, in run
+    ref_output = self._bioemu.infer_batch([original])[0]
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Test/protein_optimizer/protein_optimizer/bioemu.py", line 141, in infer_batch
+    raw_output = self._run_inference(seq)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Test/protein_optimizer/protein_optimizer/bioemu.py", line 235, in _run_inference
+    bioemu_sample(
+  File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/bioemu/utils.py", line 59, in with_stackprint
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/bioemu/sample.py", line 199, in main
+    check_protein_valid(sequence)
+  File "/workspace/Test/protein_optimizer/.venv/lib/python3.11/site-packages/bioemu/seq_io.py", line 61, in check_protein_valid
+    assert aa in IUPACPROTEIN, f"Sequence contains non-valid protein character: {aa}"
+           ^^^^^^^^^^^^^^^^^^
+AssertionError: Sequence contains non-valid protein character: .

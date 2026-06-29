@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import random
 from abc import ABC, abstractmethod
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .config import MutationConfig
 from .esm import AMINO_ACIDS, ESM2MutationProposer
@@ -259,6 +259,68 @@ class CrossoverOperator:
             child_a.extend(list(b[len(a):]))
             child_b.extend(list(b[len(a):]))
         return "".join(child_a), "".join(child_b)
+
+
+# ---------------------------------------------------------------------------
+# Common-ancestor crossover (for the evolutionary search pipeline)
+# ---------------------------------------------------------------------------
+
+
+class CommonAncestorCrossover:
+    """
+    Crossover operator based on consensus positions across an elite pool.
+
+    Algorithm:
+      1. Find positions where ALL elite sequences carry the same amino acid
+         (the "common ancestor" backbone — these positions are locked in).
+      2. Generate offspring by copying the consensus backbone and randomly
+         sampling from two random parents at each variable position.
+
+    This drives the population toward a shared structural scaffold while still
+    exploring variation at positions the model hasn't converged on yet.
+    """
+
+    def __init__(self, rng: random.Random) -> None:
+        self.rng = rng
+
+    def consensus_positions(self, sequences: List[str]) -> Dict[int, str]:
+        """Return {position: amino_acid} for every position where all sequences agree."""
+        if not sequences:
+            return {}
+        L = len(sequences[0])
+        consensus: Dict[int, str] = {}
+        for pos in range(L):
+            aa_set = {seq[pos] for seq in sequences if pos < len(seq)}
+            if len(aa_set) == 1:
+                consensus[pos] = next(iter(aa_set))
+        return consensus
+
+    def generate_offspring(self, parents: List[str], n_offspring: int) -> List[str]:
+        """
+        Generate `n_offspring` sequences by fixing consensus positions and
+        recombining variable positions from random parent pairs.
+        """
+        if not parents:
+            return []
+
+        consensus = self.consensus_positions(parents)
+        L = len(parents[0])
+        variable_positions = [i for i in range(L) if i not in consensus]
+
+        offspring: List[str] = []
+        for _ in range(n_offspring):
+            template = list(parents[0])   # consensus positions are identical across parents
+            p1 = self.rng.choice(parents)
+            p2 = self.rng.choice(parents)
+            for pos in variable_positions:
+                template[pos] = self.rng.choice([p1[pos], p2[pos]])
+            offspring.append("".join(template))
+
+        return offspring
+
+    def variable_position_count(self, sequences: List[str]) -> int:
+        """Number of positions that are NOT conserved across the sequences."""
+        return len(sequences[0]) - len(self.consensus_positions(sequences)) if sequences else 0
 
 
 # ---------------------------------------------------------------------------
