@@ -243,8 +243,8 @@ def render_frame(
     fig.tight_layout(pad=0.5)
     fig.canvas.draw()
 
-    buf = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    buf = buf.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    w, h = fig.canvas.get_width_height()
+    buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 4)[:, :, :3]
     plt.close(fig)
     return buf
 
